@@ -1,0 +1,218 @@
+import { Button, LineEdit, TextEdit, ComboBox, CheckBox, Slider, ScrollView, Palette } from "std-widgets.slint";
+import { App, CustomFieldItem } from "types.slint";
+import { FieldLabel, PageTitle, SectionTitle, CopyButton } from "widgets.slint";
+
+component FormField {
+    in property <string> label;
+    in-out property <string> text <=> edit.text;
+    in property <string> placeholder;
+    in property <bool> autofocus: false;
+    in property <InputType> input-type: InputType.text;
+    callback edited(text: string);
+    VerticalLayout {
+        spacing: 4px;
+        FieldLabel { text: root.label; }
+        edit := LineEdit {
+            placeholder-text: root.placeholder;
+            font-size: 15px;
+            input-type: root.input-type;
+            init => { if root.autofocus { self.focus(); } }
+            edited(t) => { root.edited(t); }
+            accepted => { App.save-form(false); }
+        }
+    }
+}
+
+component FormArea {
+    in property <string> label;
+    in-out property <string> text <=> edit.text;
+    in property <string> placeholder;
+    in property <bool> mono: false;
+    in property <int> rows: 4;
+    VerticalLayout {
+        spacing: 4px;
+        FieldLabel { text: root.label; }
+        edit := TextEdit {
+            placeholder-text: root.placeholder;
+            font-size: 14px;
+            font-family: root.mono ? App.mono-font : "";
+            height: root.rows * 22px + 16px;
+            wrap: word-wrap;
+        }
+    }
+}
+
+export component EntryForm {
+    in property <bool> edit-mode: false;
+
+    FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Escape { App.cancel-form(); return accept; }
+            reject
+        }
+
+        VerticalLayout {
+            HorizontalLayout {
+                padding: 24px;
+                padding-bottom: 8px;
+                spacing: 12px;
+                PageTitle { text: root.edit-mode ? "Edit account" : "Add account"; horizontal-stretch: 1; }
+                Button { text: "Cancel"; clicked => { App.cancel-form(); } }
+                Button { text: root.edit-mode ? "Save changes" : "Save account"; primary: true; clicked => { App.save-form(false); } }
+            }
+
+            ScrollView {
+                VerticalLayout {
+                    width: parent.visible-width;
+                    padding-left: 24px;
+                    padding-right: 24px;
+                    padding-bottom: 24px;
+                    spacing: 14px;
+                    alignment: start;
+
+                    FieldLabel { text: "Press Enter in any field to save. Esc cancels."; }
+
+                    FormField {
+                        label: "Site or service";
+                        placeholder: "e.g. Amazon";
+                        text <=> App.form-title;
+                        autofocus: true;
+                        edited => { App.site-edited(); }
+                    }
+                    FormField {
+                        label: "Website";
+                        placeholder: "https://…";
+                        text <=> App.form-url;
+                        edited => { App.site-edited(); }
+                    }
+
+                    if App.duplicate-title != "": Rectangle {
+                        background: #fff8e1;
+                        border-color: #f9a825;
+                        border-width: 1px;
+                        border-radius: 6px;
+                        HorizontalLayout {
+                            padding: 10px;
+                            spacing: 12px;
+                            Text {
+                                text: "Already have \"" + App.duplicate-title + "\". Replace it? The old entry will be kept and marked not working.";
+                                wrap: word-wrap;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                                color: #5d4037;
+                            }
+                            Button { text: "Replace"; primary: true; clicked => { App.save-form(true); } }
+                        }
+                    }
+
+                    FormField { label: "Username or email"; text <=> App.form-username; }
+
+                    VerticalLayout {
+                        spacing: 6px;
+                        FieldLabel { text: "Password"; }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            pw := LineEdit {
+                                text <=> App.form-password;
+                                font-size: 18px;
+                                font-family: App.mono-font;
+                                accepted => { App.save-form(false); }
+                            }
+                            Button { text: "Regenerate"; clicked => { App.regenerate(); } }
+                            CopyButton { value: App.form-password; }
+                        }
+                        HorizontalLayout {
+                            spacing: 16px;
+                            alignment: start;
+                            Text { text: "Length " + App.gen-length; vertical-alignment: center; width: 90px; }
+                            Slider {
+                                width: 220px;
+                                minimum: 8;
+                                maximum: 64;
+                                step: 1;
+                                value: App.gen-length;
+                                changed(v) => {
+                                    if Math.round(v) != App.gen-length {
+                                        App.gen-length = Math.round(v);
+                                        App.regenerate();
+                                    }
+                                }
+                            }
+                            CheckBox { text: "Digits"; checked <=> App.gen-digits; toggled => { App.regenerate(); } }
+                            CheckBox { text: "Symbols"; checked <=> App.gen-symbols; toggled => { App.regenerate(); } }
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: 12px;
+                        FormField { label: "Recovery PIN"; text <=> App.form-pin; }
+                        FormField { label: "Recovery phone"; text <=> App.form-phone; }
+                    }
+
+                    FormArea { label: "Security questions and answers"; text <=> App.form-questions; rows: 3; }
+                    FormArea { label: "Notes"; text <=> App.form-notes; rows: 4; mono: App.notes-monospace; }
+
+                    VerticalLayout {
+                        spacing: 4px;
+                        FieldLabel { text: "Group"; }
+                        ComboBox {
+                            model: App.form-groups;
+                            current-index <=> App.form-group-index;
+                        }
+                    }
+
+                    if root.edit-mode: VerticalLayout {
+                        spacing: 14px;
+                        FormField { label: "Tags (comma separated)"; text <=> App.form-tags; }
+
+                        VerticalLayout {
+                            spacing: 6px;
+                            HorizontalLayout {
+                                spacing: 8px;
+                                FieldLabel { text: "Custom fields"; horizontal-stretch: 1; }
+                                Button { text: "Add field"; clicked => { App.custom-add(); } }
+                            }
+                            for f[i] in App.form-custom: HorizontalLayout {
+                                spacing: 8px;
+                                key := LineEdit {
+                                    text: f.key;
+                                    placeholder-text: "Name";
+                                    width: 180px;
+                                    edited(t) => { App.custom-edited(i, t, val.text, prot.checked); }
+                                    accepted => { App.save-form(false); }
+                                }
+                                val := LineEdit {
+                                    text: f.value;
+                                    placeholder-text: "Value";
+                                    horizontal-stretch: 1;
+                                    input-type: prot.checked ? InputType.password : InputType.text;
+                                    edited(t) => { App.custom-edited(i, key.text, t, prot.checked); }
+                                    accepted => { App.save-form(false); }
+                                }
+                                prot := CheckBox {
+                                    text: "Protected";
+                                    checked: f.protected;
+                                    toggled => { App.custom-edited(i, key.text, val.text, self.checked); }
+                                }
+                                Button { text: "Remove"; clicked => { App.custom-remove(i); } }
+                            }
+                        }
+
+                        SectionTitle { text: "Auto-Type"; }
+                        FormField {
+                            label: "Sequence override (empty = default from Settings)";
+                            placeholder: "{USERNAME}{TAB}{PASSWORD}{ENTER}";
+                            text <=> App.form-autotype-sequence;
+                        }
+                        FormArea {
+                            label: "Window title patterns, one per line (* wildcard, //regex//)";
+                            text <=> App.form-windows;
+                            rows: 3;
+                            mono: true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

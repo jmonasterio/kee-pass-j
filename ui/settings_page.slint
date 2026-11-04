@@ -1,0 +1,81 @@
+import { Button, LineEdit, CheckBox, Slider, ScrollView, Palette } from "std-widgets.slint";
+import { App } from "types.slint";
+import { FieldLabel, PageTitle, SectionTitle } from "widgets.slint";
+
+export component SettingsPage {
+    FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Escape { App.cancel-settings(); return accept; }
+            reject
+        }
+
+        VerticalLayout {
+            HorizontalLayout {
+                padding: 24px;
+                padding-bottom: 8px;
+                spacing: 12px;
+                PageTitle { text: "Settings"; horizontal-stretch: 1; }
+                Button { text: "Cancel"; clicked => { App.cancel-settings(); } }
+                Button { text: "Save"; primary: true; clicked => { App.save-settings(); } }
+            }
+
+            ScrollView {
+                VerticalLayout {
+                    width: parent.visible-width;
+                    padding-left: 24px;
+                    padding-right: 24px;
+                    padding-bottom: 24px;
+                    spacing: 18px;
+                    alignment: start;
+
+                    if App.settings-error != "": Text { text: App.settings-error; color: #d32f2f; wrap: word-wrap; }
+
+                    SectionTitle { text: "Startup"; }
+                    CheckBox { text: "Reopen the last databases on launch"; checked <=> App.settings-reopen-last; }
+
+                    SectionTitle { text: "Auto-Type"; }
+                    VerticalLayout {
+                        spacing: 4px;
+                        FieldLabel { text: "Global hotkey (e.g. Ctrl+Alt+A)"; }
+                        hotkey := LineEdit { text <=> App.settings-hotkey; font-size: 15px; init => { self.focus(); } accepted => { App.save-settings(); } }
+                    }
+                    VerticalLayout {
+                        spacing: 4px;
+                        FieldLabel { text: "Default sequence"; }
+                        LineEdit { text <=> App.settings-sequence; font-size: 15px; font-family: App.mono-font; accepted => { App.save-settings(); } }
+                    }
+
+                    SectionTitle { text: "Display"; }
+                    CheckBox { text: "Show notes in a monospace font"; checked <=> App.settings-notes-monospace; }
+
+                    SectionTitle { text: "Password generator defaults"; }
+                    HorizontalLayout {
+                        spacing: 16px;
+                        alignment: start;
+                        Text { text: "Length " + App.settings-gen-length; vertical-alignment: center; width: 90px; }
+                        Slider {
+                            width: 220px;
+                            minimum: 8;
+                            maximum: 64;
+                            step: 1;
+                            value: App.settings-gen-length;
+                            changed(v) => { App.settings-gen-length = Math.round(v); }
+                        }
+                    }
+                    CheckBox { text: "Digits"; checked <=> App.settings-gen-digits; }
+                    CheckBox { text: "Symbols (!@#$%&*?-_=+)"; checked <=> App.settings-gen-symbols; }
+                    CheckBox { text: "Uppercase letters"; checked <=> App.settings-gen-uppercase; }
+                    CheckBox { text: "Leave out look-alike characters (0 O o 1 l I | 5 S 8 B 2 Z)"; checked <=> App.settings-gen-exclude-ambiguous; }
+
+                    SectionTitle { text: "Backups"; }
+                    FieldLabel { text: "Every save also copies the database here (newest 20, plus one per day for 30 days)."; }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        LineEdit { text: App.settings-backup-dir; read-only: true; font-size: 14px; horizontal-stretch: 1; }
+                        Button { text: "Open folder"; clicked => { App.open-backup-folder(); } }
+                    }
+                }
+            }
+        }
+    }
+}

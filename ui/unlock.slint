@@ -1,0 +1,177 @@
+import { Button, LineEdit, ListView, Palette, VerticalBox, HorizontalBox } from "std-widgets.slint";
+import { App, RecentItem } from "types.slint";
+import { FieldLabel, PageTitle, SectionTitle } from "widgets.slint";
+
+export component UnlockPage {
+    property <bool> has-selection: App.selected-recent >= 0 && App.selected-recent < App.recent.length;
+    property <bool> selected-missing: root.has-selection && App.recent[App.selected-recent].missing;
+    property <string> selected-path: root.has-selection ? App.recent[App.selected-recent].path : "";
+
+    FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Escape {
+                if App.creating { App.cancel-create(); return accept; }
+                if App.has-open-dbs { App.back-to-main(); return accept; }
+            }
+            reject
+        }
+
+        VerticalBox {
+            padding: 32px;
+            spacing: 20px;
+            alignment: start;
+
+            HorizontalLayout {
+                spacing: 12px;
+                PageTitle { text: "KeePassJ"; horizontal-stretch: 1; }
+                if App.has-open-dbs: Button { text: "Back"; clicked => { App.back-to-main(); } }
+            }
+
+            if !App.creating: VerticalLayout {
+                spacing: 20px;
+
+                SectionTitle { text: "Open a database"; }
+
+                Rectangle {
+                    background: Palette.alternate-background;
+                    border-radius: 8px;
+                    border-width: 1px;
+                    border-color: Palette.border;
+                    height: 240px;
+                    min-width: 520px;
+                    if App.recent.length == 0: Text {
+                        x: 16px;
+                        width: parent.width - 32px;
+                        height: parent.height;
+                        text: "No recent databases. Use Open file… or New database…";
+                        color: Palette.foreground.with-alpha(0.6);
+                        wrap: word-wrap;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                    ListView {
+                        for item[i] in App.recent: Rectangle {
+                            height: 52px;
+                            background: i == App.selected-recent ? Palette.selection-background.with-alpha(0.35) : transparent;
+                            border-radius: 6px;
+                            TouchArea {
+                                clicked => { App.selected-recent = i; pw.focus(); }
+                            }
+                            HorizontalLayout {
+                                padding-left: 14px;
+                                padding-right: 10px;
+                                spacing: 10px;
+                                VerticalLayout {
+                                    alignment: center;
+                                    spacing: 2px;
+                                    horizontal-stretch: 1;
+                                    Text { text: item.name; font-size: 16px; font-weight: 600; overflow: elide; }
+                                    Text { text: item.path; font-size: 12px; color: Palette.foreground.with-alpha(0.6); overflow: elide; }
+                                }
+                                if item.missing: Text {
+                                    text: "file not found";
+                                    color: #d32f2f;
+                                    font-size: 13px;
+                                    vertical-alignment: center;
+                                }
+                                Button {
+                                    text: "Remove";
+                                    clicked => { App.forget-recent(i); }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    spacing: 6px;
+                    FieldLabel { text: root.has-selection ? "Password for " + App.recent[App.selected-recent].name : "Select a database above"; }
+                    HorizontalLayout {
+                        spacing: 10px;
+                        pw := LineEdit {
+                            input-type: InputType.password;
+                            placeholder-text: "Master password";
+                            font-size: 16px;
+                            enabled: root.has-selection && !root.selected-missing;
+                            init => { self.focus(); }
+                            accepted(text) => {
+                                if root.has-selection && !root.selected-missing {
+                                    App.unlock(App.selected-recent, text);
+                                }
+                            }
+                        }
+                        Button {
+                            text: "Unlock";
+                            primary: true;
+                            enabled: root.has-selection && !root.selected-missing;
+                            clicked => { App.unlock(App.selected-recent, pw.text); }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: 10px;
+                        alignment: start;
+                        if root.has-selection && App.recent[App.selected-recent].keyfile != "": Text {
+                            text: "Key file: " + App.recent[App.selected-recent].keyfile;
+                            font-size: 13px;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                        if root.has-selection && App.recent[App.selected-recent].keyfile != "": Button {
+                            text: "Clear";
+                            clicked => { App.clear-keyfile(App.selected-recent); }
+                        }
+                        Button {
+                            text: "Key file…";
+                            enabled: root.has-selection;
+                            clicked => { App.choose-keyfile(App.selected-recent); }
+                        }
+                    }
+                    if App.unlock-error != "": Text {
+                        text: App.unlock-error;
+                        color: #d32f2f;
+                        font-size: 14px;
+                        wrap: word-wrap;
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: 12px;
+                    alignment: start;
+                    Button { text: "Open file…"; clicked => { App.browse-open(); } }
+                    Button { text: "New database…"; clicked => { App.browse-new(); } }
+                }
+            }
+
+            if App.creating: VerticalLayout {
+                spacing: 16px;
+                SectionTitle { text: "Create a new database"; }
+                Text { text: App.new-db-path; color: Palette.foreground.with-alpha(0.7); overflow: elide; }
+                FieldLabel { text: "Choose a master password. There is no way to recover it if you forget it."; }
+                new-pw := LineEdit {
+                    input-type: InputType.password;
+                    placeholder-text: "Master password";
+                    font-size: 16px;
+                    init => { self.focus(); }
+                    accepted => { confirm-pw.focus(); }
+                }
+                confirm-pw := LineEdit {
+                    input-type: InputType.password;
+                    placeholder-text: "Repeat the password";
+                    font-size: 16px;
+                    accepted => { App.create-database(new-pw.text, confirm-pw.text); }
+                }
+                if App.unlock-error != "": Text {
+                    text: App.unlock-error;
+                    color: #d32f2f;
+                    wrap: word-wrap;
+                }
+                HorizontalLayout {
+                    spacing: 12px;
+                    alignment: start;
+                    Button { text: "Create"; primary: true; clicked => { App.create-database(new-pw.text, confirm-pw.text); } }
+                    Button { text: "Cancel"; clicked => { App.cancel-create(); } }
+                }
+            }
+        }
+    }
+}

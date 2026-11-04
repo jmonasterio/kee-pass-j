@@ -1,0 +1,7 @@
+/target
+/dist
+*.kdbx
+!tests/fixtures/*.kdbx
+*.kdbx.tmp
+*.key
+*.keyx
