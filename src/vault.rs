@@ -203,6 +203,11 @@ pub struct Vault {
     /// Kept so `save` can re-encrypt. `DatabaseKey` zeroizes its contents on drop.
     key: DatabaseKey,
     dirty: bool,
+    /// The file on disk has not been copied to the backups yet in this session. The first
+    /// save copies it before replacing it.
+    original_pending: bool,
+    /// Opened as KDBX 3.1; the first save keeps a permanent copy of the 3.1 file.
+    upgraded_from_kdbx3: bool,
 }
 
 impl fmt::Debug for Vault {
@@ -356,7 +361,8 @@ impl Vault {
         // KeePass 2.35+ does it: same outer cipher and AES-KDF rounds, inner stream cipher
         // ChaCha20. The file on disk changes format on the first save; KeePass 2.35+ and
         // KeePassXC 2.3+ open the result.
-        if let DatabaseVersion::KDB3(_) = db.config.version {
+        let upgraded_from_kdbx3 = matches!(db.config.version, DatabaseVersion::KDB3(_));
+        if upgraded_from_kdbx3 {
             db.config.version = DatabaseVersion::KDB4(1);
             db.config.inner_cipher_config = InnerCipherConfig::ChaCha20;
         }
@@ -365,6 +371,8 @@ impl Vault {
             db,
             key,
             dirty: false,
+            original_pending: true,
+            upgraded_from_kdbx3,
         })
     }
 
@@ -397,6 +405,8 @@ impl Vault {
             db,
             key,
             dirty: true,
+            original_pending: false,
+            upgraded_from_kdbx3: false,
         };
         vault.ensure_recycle_bin();
         Ok(vault)
@@ -439,6 +449,13 @@ impl Vault {
             let _ = fs::remove_file(&tmp);
             return Err(e);
         }
+        if self.original_pending {
+            if let Err(e) = self.backup_original(backups) {
+                let _ = fs::remove_file(&tmp);
+                return Err(e);
+            }
+            self.original_pending = false;
+        }
         let backup_target = backup_file_path(backups, &self.path, Local::now())?;
         let mut backup_written = false;
         if let Err(rename_err) = fs::rename(&tmp, &self.path) {
@@ -467,6 +484,26 @@ impl Vault {
             copy_backup(&self.path, &backup_target)?;
         }
         rotate_backups_at(backups, &self.path, Local::now())?;
+        Ok(())
+    }
+
+    /// Copies the file currently on disk into the backup folder before the session's first
+    /// save replaces it. The copy is named after the file's modification time and rotates
+    /// like any other backup. A file opened as KDBX 3.1 also gets
+    /// `<stem>-kdbx3-original.kdbx`, which rotation never deletes; it is written once.
+    fn backup_original(&self, backups: &BackupPolicy) -> Result<(), VaultError> {
+        let Ok(meta) = fs::metadata(&self.path) else {
+            return Ok(()); // nothing on disk yet
+        };
+        let mtime: DateTime<Local> = meta.modified().map(DateTime::from).unwrap_or_else(|_| Local::now());
+        copy_backup(&self.path, &backup_file_path(backups, &self.path, mtime)?)?;
+        if self.upgraded_from_kdbx3 {
+            let (dir, stem) = backup_subdir(backups, &self.path)?;
+            let keep = dir.join(format!("{stem}-kdbx3-original.{BACKUP_EXT}"));
+            if !keep.exists() {
+                copy_backup(&self.path, &keep)?;
+            }
+        }
         Ok(())
     }
 
@@ -1044,7 +1081,17 @@ mod tests {
         assert!(before.iter().any(|(_, a, _)| !a.is_empty()), "fixture should have attachments");
         let root = v.root();
         v.upsert_entry(edit(root, "Added")).unwrap();
+        let original = fs::read(&path).unwrap();
         v.save(&pol).unwrap();
+        v.upsert_entry(edit(root, "Second")).unwrap();
+        v.save(&pol).unwrap();
+        let (dir, stem) = backup_subdir(&pol, &path).unwrap();
+        let kept = dir.join(format!("{stem}-kdbx3-original.{BACKUP_EXT}"));
+        assert_eq!(fs::read(&kept).unwrap(), original, "KDBX 3.1 original must be kept byte for byte");
+        assert!(
+            list_backups(&pol, &path).iter().any(|p| fs::read(p).unwrap() == original),
+            "pre-save copy must be in the rotating backups"
+        );
 
         let mut header = [0u8; 12];
         std::io::Read::read_exact(&mut File::open(&path).unwrap(), &mut header).unwrap();

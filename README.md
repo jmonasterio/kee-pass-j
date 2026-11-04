@@ -15,7 +15,9 @@ older KeePass versions do not.
   password is wrong, fall back to the picker/unlock screen once.
 - Autosave on every change. Writes are atomic (`.tmp` → fsync → rename). Every save also
   drops a copy into a rolling backup folder in the per-user app data directory (off the
-  USB): the newest 20 saves plus one per day for 30 days.
+  USB): the newest 20 saves plus one per day for 30 days. The first save of each session
+  first copies the file as it was on disk, so edits made by other apps are kept too. A
+  KDBX 3.1 file also keeps a permanent `<name>-kdbx3-original.kdbx` copy.
 - Group tree, entry list, always-visible search box, view/edit/add/delete entries.
   Notes render readably with optional monospace and per-line copy.
 - "Add account" capture screen: site, URL, username/email, password (generator
