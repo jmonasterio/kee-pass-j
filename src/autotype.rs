@@ -206,6 +206,9 @@ fn placeholder(body: &str) -> Result<Vec<Token>, AutotypeError> {
         "RIGHT" => Token::Key(Key::RightArrow),
         "PGUP" | "PAGEUP" => Token::Key(Key::PageUp),
         "PGDN" | "PAGEDOWN" => Token::Key(Key::PageDown),
+        // macOS keyboards have no Insert key and enigo does not define Key::Insert there;
+        // `{INSERT}` falls through to UnknownPlaceholder on macOS.
+        #[cfg(not(target_os = "macos"))]
         "INSERT" | "INS" => Token::Key(Key::Insert),
         "F1" => Token::Key(Key::F1),
         "F2" => Token::Key(Key::F2),
