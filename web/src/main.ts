@@ -1,12 +1,12 @@
-import { api, errorText, onAutotypeChoose, onToast, type PlatformInfo } from "./api";
+import { api, errorText, onToast, type PlatformInfo } from "./api";
 import { isOverlayOpen } from "./dialogs";
 import { el, setChildren } from "./dom";
 import { registerFluent } from "./fluent";
 import { nav } from "./nav";
 import { initTheme } from "./theme";
 import { toast } from "./toast";
-import { openChooser } from "./views/chooser";
 import { mainKeydown, renderMain } from "./views/main";
+import { startQuick } from "./views/quick";
 import { renderUnlock, unlockKeydown } from "./views/unlock";
 
 type Page = "unlock" | "main";
@@ -25,8 +25,24 @@ async function start(): Promise<void> {
     info = { os: /Mac/.test(navigator.userAgent) ? "macos" : /Win/.test(navigator.userAgent) ? "windows" : "linux", backdrop: false, notice: null };
   }
   document.documentElement.dataset.os = info.os;
-  document.documentElement.dataset.backdrop = String(info.backdrop);
   initTheme(info.os);
+
+  // The webview's own context menu (Back, Reload, Print, Inspect) does not belong in a desktop
+  // app. Text fields keep it for cut/copy/paste.
+  document.addEventListener("contextmenu", (event) => {
+    const editable = event.composedPath().some(
+      (node) => node instanceof HTMLElement && (node.matches("input, textarea") || node.isContentEditable),
+    );
+    if (!editable) event.preventDefault();
+  });
+
+  // The same bundle runs the Quick Access popup (tauri.conf.json loads it with ?quick).
+  if (new URLSearchParams(location.search).has("quick")) {
+    document.documentElement.dataset.backdrop = "false";
+    await startQuick(root);
+    return;
+  }
+  document.documentElement.dataset.backdrop = String(info.backdrop);
 
   nav.unlock = (view) => {
     page = "unlock";
@@ -43,17 +59,7 @@ async function start(): Promise<void> {
     else mainKeydown(event);
   });
 
-  // The webview's own context menu (Back, Reload, Print, Inspect) does not belong in a desktop
-  // app. Text fields keep it for cut/copy/paste.
-  document.addEventListener("contextmenu", (event) => {
-    const editable = event.composedPath().some(
-      (node) => node instanceof HTMLElement && (node.matches("input, textarea") || node.isContentEditable),
-    );
-    if (!editable) event.preventDefault();
-  });
-
   await onToast(toast);
-  await onAutotypeChoose(openChooser);
 
   nav.unlock(await api.unlockView());
   if (info.notice) toast(info.notice);

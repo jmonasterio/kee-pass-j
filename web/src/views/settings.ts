@@ -102,7 +102,12 @@ export async function openSettings(): Promise<void> {
     { class: "settings-body" },
     section(
       "Auto-Type",
-      row("keyboard", "Global hotkey", "Press it in a login window to type the matching account.", hotkey),
+      row(
+        "keyboard",
+        "Global hotkey",
+        "In a login window: types the matching account, or opens Quick Access to pick or search one.",
+        hotkey,
+      ),
       row("text", "Default typing sequence", "What Auto-Type types when an account has no sequence of its own.", sequence),
     ),
     section(

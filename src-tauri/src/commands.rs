@@ -741,25 +741,72 @@ pub async fn autotype_selected(app: AppHandle, state: State<'_, Shared>) -> R<()
         let st = state.lock();
         (st.active_tab, selected_entry(&st)?.id)
     };
-    typing::perform_hidden(&app, tab, id, false)
+    typing::perform_hidden(&app, "main", tab, id, true)
 }
 
+// ---------------------------------------------------------------------------
+// Quick Access (the popup the global hotkey opens)
+// ---------------------------------------------------------------------------
+
+/// Searches every open database; an empty query returns nothing (the popup keeps its matches).
 #[tauri::command]
-pub async fn autotype_choose(app: AppHandle, state: State<'_, Shared>, index: usize) -> R<()> {
-    let pick = {
-        let mut st = state.lock();
-        let pick = st.chooser.get(index).copied();
-        st.chooser.clear();
-        pick
-    };
-    match pick {
-        Some((db, id)) => typing::perform_hidden(&app, db, id, true),
-        None => Ok(()),
+pub async fn quick_search(state: State<'_, Shared>, text: String) -> R<Vec<QuickItem>> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Ok(Vec::new());
     }
+    let st = state.lock();
+    let mut items = Vec::new();
+    for (i, db) in st.dbs.iter().enumerate() {
+        for e in db.vault.search(text) {
+            items.push(typing::quick_item(&st, i, &e));
+        }
+    }
+    items.sort_by_key(|item| item.stale);
+    items.truncate(50);
+    Ok(items)
+}
+
+fn quick_entry(st: &AppState, db: usize, id: &str) -> R<EntryView> {
+    let id = parse_entry_id(id)?;
+    st.dbs
+        .get(db)
+        .and_then(|d| d.vault.entry(id))
+        .ok_or_else(|| "That account no longer exists.".into())
+}
+
+/// Hides Quick Access so the window behind it gets the focus back, then types the account.
+#[tauri::command]
+pub async fn quick_type(app: AppHandle, state: State<'_, Shared>, db: usize, id: String) -> R<()> {
+    let entry = quick_entry(&state.lock(), db, &id)?;
+    typing::perform_hidden(&app, "quick", db, entry.id, false)
+}
+
+/// Copies one field of the account and closes Quick Access.
+#[tauri::command]
+pub async fn quick_copy(app: AppHandle, state: State<'_, Shared>, db: usize, id: String, field: String) -> R<()> {
+    let value = field_value(&quick_entry(&state.lock(), db, &id)?, &field)?;
+    app.clipboard().write_text(value).map_err(|e| format!("Could not copy: {e}"))?;
+    if let Some(w) = app.get_webview_window("quick") {
+        let _ = w.hide();
+    }
+    Ok(())
 }
 
 #[tauri::command]
-pub async fn autotype_cancel(state: State<'_, Shared>) -> R<()> {
-    state.lock().chooser.clear();
+pub async fn quick_hide(app: AppHandle) -> R<()> {
+    if let Some(w) = app.get_webview_window("quick") {
+        let _ = w.hide();
+    }
+    Ok(())
+}
+
+/// "Open Our Logins" from Quick Access (e.g. to unlock a database first).
+#[tauri::command]
+pub async fn quick_open_main(app: AppHandle) -> R<()> {
+    if let Some(w) = app.get_webview_window("quick") {
+        let _ = w.hide();
+    }
+    typing::bring_main_to_front(&app);
     Ok(())
 }

@@ -86,8 +86,19 @@ fn main() {
         .setup(|app| {
             let window = app.get_webview_window("main").expect("main window is declared in tauri.conf.json");
             let backdrop = apply_backdrop(&window);
+            let quick = app.get_webview_window("quick").expect("quick window is declared in tauri.conf.json");
             #[cfg(windows)]
-            harden_webview2(&window);
+            {
+                harden_webview2(&window);
+                harden_webview2(&quick);
+            }
+            // Quick Access behaves like Spotlight: clicking anywhere else closes it.
+            let q = quick.clone();
+            quick.on_window_event(move |event| {
+                if let tauri::WindowEvent::Focused(false) = event {
+                    let _ = q.hide();
+                }
+            });
             let notice = typing::init(app.handle());
             app.manage(commands::Platform { backdrop, notice });
             Ok(())
@@ -131,8 +142,11 @@ fn main() {
             commands::settings_save,
             commands::open_backup_folder,
             commands::autotype_selected,
-            commands::autotype_choose,
-            commands::autotype_cancel,
+            commands::quick_search,
+            commands::quick_type,
+            commands::quick_copy,
+            commands::quick_hide,
+            commands::quick_open_main,
         ])
         .run(tauri::generate_context!())
         .expect("Our Logins failed to start");

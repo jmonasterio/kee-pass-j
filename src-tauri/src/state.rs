@@ -33,8 +33,6 @@ pub struct AppState {
     /// Path preselected on the unlock page.
     pub picker_selected: Option<PathBuf>,
     pub pending_new_db: Option<PathBuf>,
-    /// (db index, entry) pairs behind the Auto-Type chooser dialog.
-    pub chooser: Vec<(usize, EntryId)>,
     /// Tab whose last save failed, with the error text; Retry saves this one.
     pub save_error: Option<(usize, String)>,
 }
@@ -54,7 +52,6 @@ impl Shared {
             picker,
             picker_selected,
             pending_new_db: None,
-            chooser: Vec::new(),
             save_error: None,
         }))
     }

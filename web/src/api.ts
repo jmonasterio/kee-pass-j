@@ -204,10 +204,23 @@ export interface SettingsView {
   generator: GeneratorSettings;
   backupDir: string;
 }
-export interface ChooserItem {
+/** One account in Quick Access (never the password). */
+export interface QuickItem {
+  /** Index of the open database. */
+  db: number;
+  id: Id;
   title: string;
   username: string;
-  db: string;
+  url: string;
+  stale: boolean;
+  folder: string | null;
+  /** Only set when more than one database is open. */
+  dbName: string | null;
+}
+export interface QuickOpen {
+  locked: boolean;
+  windowTitle: string;
+  matches: QuickItem[];
 }
 
 /** Text of a rejected invoke: the backend rejects with a user-readable string. */
@@ -263,14 +276,17 @@ export const api = {
   openBackupFolder: () => invoke<void>("open_backup_folder"),
 
   autotypeSelected: () => invoke<void>("autotype_selected"),
-  autotypeChoose: (index: number) => invoke<void>("autotype_choose", { index }),
-  autotypeCancel: () => invoke<void>("autotype_cancel"),
+  quickSearch: (text: string) => invoke<QuickItem[]>("quick_search", { text }),
+  quickType: (db: number, id: Id) => invoke<void>("quick_type", { db, id }),
+  quickCopy: (db: number, id: Id, field: "username" | "password") => invoke<void>("quick_copy", { db, id, field }),
+  quickHide: () => invoke<void>("quick_hide"),
+  quickOpenMain: () => invoke<void>("quick_open_main"),
 };
 
 export function onToast(handler: (message: string) => void): Promise<UnlistenFn> {
   return listen<string>("toast", (event) => handler(event.payload));
 }
 
-export function onAutotypeChoose(handler: (items: ChooserItem[]) => void): Promise<UnlistenFn> {
-  return listen<ChooserItem[]>("autotype-choose", (event) => handler(event.payload));
+export function onQuickOpen(handler: (payload: QuickOpen) => void): Promise<UnlistenFn> {
+  return listen<QuickOpen>("quick-open", (event) => handler(event.payload));
 }

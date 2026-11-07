@@ -1,4 +1,4 @@
-//! Global hotkey and Auto-Type: window matching, the chooser, hiding our window while typing.
+//! Global hotkey and Auto-Type: window matching, Quick Access, hiding our window while typing.
 //!
 //! `GlobalHotKeyManager` and the keystroke injection (`enigo`) run on the main thread:
 //! the manager's hidden window lives on the thread that created it, and macOS keyboard
@@ -16,8 +16,8 @@ use tauri::{AppHandle, Emitter, Manager};
 use ourlogins::autotype;
 use ourlogins::vault::{EntryId, EntryView};
 
-use crate::dto::ChooserItem;
-use crate::state::Shared;
+use crate::dto::{QuickItem, QuickOpen};
+use crate::state::{folders, ordered_groups, AppState, Shared};
 
 thread_local! {
     /// Main-thread only: the manager and the currently registered hotkey.
@@ -121,12 +121,12 @@ fn run_typing(job: &TypingJob) -> Result<(), String> {
     autotype::perform(&job.tokens, &|name| resolve_from(fields, name)).map_err(|e| format!("Auto-Type failed: {e}"))
 }
 
-/// Hides our window so the previous window regains focus, waits 250 ms, types on the main
-/// thread, then shows our window again (minimized when `minimize_after`, so the target
-/// window keeps the focus).
-pub fn perform_hidden(app: &AppHandle, db_index: usize, id: EntryId, minimize_after: bool) -> Result<(), String> {
+/// Hides the window `label` so the window behind it regains focus, waits 250 ms, types on the
+/// main thread, then shows `label` again when `show_again` (the main window in select-entry
+/// mode; Quick Access stays hidden).
+pub fn perform_hidden(app: &AppHandle, label: &str, db_index: usize, id: EntryId, show_again: bool) -> Result<(), String> {
     let job = typing_job(app, db_index, id)?;
-    let window = app.get_webview_window("main").ok_or("Main window missing.")?;
+    let window = app.get_webview_window(label).ok_or("Window missing.")?;
     window.hide().map_err(|e| format!("Could not hide the window: {e}"))?;
     let app = app.clone();
     std::thread::spawn(move || {
@@ -134,10 +134,9 @@ pub fn perform_hidden(app: &AppHandle, db_index: usize, id: EntryId, minimize_af
         let handle = app.clone();
         let _ = handle.run_on_main_thread(move || {
             let result = run_typing(&job);
-            if minimize_after {
-                let _ = window.minimize();
+            if show_again {
+                let _ = window.show();
             }
-            let _ = window.show();
             if let Err(e) = result {
                 toast(&app, &e);
             }
@@ -146,7 +145,7 @@ pub fn perform_hidden(app: &AppHandle, db_index: usize, id: EntryId, minimize_af
     Ok(())
 }
 
-fn bring_to_front(app: &AppHandle) {
+pub fn bring_main_to_front(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.unminimize();
         let _ = w.show();
@@ -154,16 +153,30 @@ fn bring_to_front(app: &AppHandle) {
     }
 }
 
-/// Hotkey pressed: type the single matching entry right away, or offer a chooser.
+/// One account in Quick Access: everything the popup shows, never the password.
+pub fn quick_item(st: &AppState, db_index: usize, e: &EntryView) -> QuickItem {
+    let db = &st.dbs[db_index];
+    let groups = ordered_groups(&db.vault);
+    QuickItem {
+        db: db_index,
+        id: e.id.to_string(),
+        title: e.title.clone(),
+        username: e.username.clone(),
+        url: e.url.clone(),
+        stale: e.stale,
+        folder: folders(&groups).into_iter().find(|f| f.id == e.group).map(|f| f.name),
+        db_name: (st.dbs.len() > 1).then(|| db.vault.name()),
+    }
+}
+
+/// Hotkey pressed: type the single account matching the active window right away. Otherwise
+/// open Quick Access over that window, listing the matches (if any) and searchable.
 fn on_hotkey(app: &AppHandle) {
-    let Some(title) = autotype::active_window_title() else {
-        toast(app, "Auto-Type: no active window.");
-        return;
-    };
+    let title = autotype::active_window_title().unwrap_or_default();
     let shared = app.state::<Shared>();
-    let (matches, names): (Vec<(usize, EntryView)>, Vec<String>) = {
+    let (payload, single) = {
         let st = shared.lock();
-        let matches = st
+        let matches: Vec<(usize, EntryView)> = st
             .dbs
             .iter()
             .enumerate()
@@ -172,34 +185,30 @@ fn on_hotkey(app: &AppHandle) {
                     .all_entries()
                     .into_iter()
                     .filter(|e| {
-                        e.autotype_windows.iter().any(|p| autotype::window_matches(p, &title))
-                            || autotype::title_matches(&e.title, &title)
+                        !title.is_empty()
+                            && (e.autotype_windows.iter().any(|p| autotype::window_matches(p, &title))
+                                || autotype::title_matches(&e.title, &title))
                     })
                     .map(move |e| (i, e))
             })
             .collect();
-        (matches, st.dbs.iter().map(|d| d.vault.name()).collect())
+        let single = (matches.len() == 1).then(|| (matches[0].0, matches[0].1.id));
+        let payload = QuickOpen {
+            locked: st.dbs.is_empty(),
+            window_title: title.clone(),
+            matches: matches.iter().map(|(db, e)| quick_item(&st, *db, e)).collect(),
+        };
+        (payload, single)
     };
-    match matches.len() {
-        0 => toast(app, &format!("Auto-Type: no account matches \"{title}\".")),
-        1 => {
-            let (db, e) = &matches[0];
-            if let Err(err) = typing_job(app, *db, e.id).and_then(|job| run_typing(&job)) {
-                toast(app, &err);
-            }
+    if let Some((db, id)) = single {
+        if let Err(err) = typing_job(app, db, id).and_then(|job| run_typing(&job)) {
+            toast(app, &err);
         }
-        _ => {
-            let items: Vec<ChooserItem> = matches
-                .iter()
-                .map(|(db, e)| ChooserItem {
-                    title: e.title.clone(),
-                    username: e.username.clone(),
-                    db: names.get(*db).cloned().unwrap_or_default(),
-                })
-                .collect();
-            shared.lock().chooser = matches.iter().map(|(db, e)| (*db, e.id)).collect();
-            bring_to_front(app);
-            let _ = app.emit("autotype-choose", items);
-        }
+        return;
     }
+    let Some(quick) = app.get_webview_window("quick") else { return };
+    let _ = app.emit_to("quick", "quick-open", payload);
+    let _ = quick.center();
+    let _ = quick.show();
+    let _ = quick.set_focus();
 }

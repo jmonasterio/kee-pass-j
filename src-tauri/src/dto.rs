@@ -217,10 +217,30 @@ pub struct SettingsView {
     pub backup_dir: String,
 }
 
+/// One account in Quick Access. Never carries the password.
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct ChooserItem {
+pub struct QuickItem {
+    /// Index of the open database (tab).
+    pub db: usize,
+    pub id: String,
     pub title: String,
     pub username: String,
-    pub db: String,
+    pub url: String,
+    pub stale: bool,
+    pub folder: Option<String>,
+    /// Database name, only when more than one database is open.
+    pub db_name: Option<String>,
+}
+
+/// Sent to the Quick Access window when the global hotkey opens it.
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct QuickOpen {
+    /// No database is unlocked: Quick Access can only offer to open the app.
+    pub locked: bool,
+    /// Title of the window that was active when the hotkey was pressed.
+    pub window_title: String,
+    /// Accounts matching that window (none or several; exactly one is typed straight away).
+    pub matches: Vec<QuickItem>,
 }

@@ -24,6 +24,22 @@
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
         "dragDropEnabled": false
+      },
+      {
+        "label": "quick",
+        "title": "Our Logins Quick Access",
+        "url": "index.html?quick",
+        "width": 620,
+        "height": 420,
+        "resizable": false,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false,
+        "center": true,
+        "shadow": true,
+        "incognito": true,
+        "dragDropEnabled": false
       }
     ],
     "security": {
