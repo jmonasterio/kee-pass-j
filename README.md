@@ -1,50 +1,47 @@
 # Our Logins
 
-A KDBX 4 password manager in Rust for two people: one on Windows with the database on a USB
-SSD, one on macOS with her own database. Files stay fully compatible with KeePass 2.x and
-KeePassXC. The window is a Tauri 2 app: a Rust backend with a TypeScript + Fluent UI web
-frontend in the system webview.
+A desktop password manager for a household's logins and important papers, stored in
+standard KeePass (`.kdbx`) files. It runs on Windows and macOS, and the files keep opening in
+KeePass 2, KeePassXC and the KeePass phone apps, so nothing is locked into this program.
 
-Older KDBX 3.1 files open normally and are rewritten as KDBX 4 on their first save
-(the `keepass` crate writes only KDBX 4). KeePass 2.35+ and KeePassXC 2.3+ open KDBX 4;
-older KeePass versions do not.
+## Goals
+
+- **Record a new account in under ten seconds.** One screen for site, username and
+  password, with a generated password already filled in.
+- **Keep old accounts instead of losing them.** An account that stopped working is flagged
+  "not working" and sorted to the bottom; it is not deleted.
+- **Never lose an edit.** Every change is saved at once, with rolling backups kept on a
+  different drive from the database.
+- **Readable passwords.** The generator leaves out look-alike characters, and passwords are
+  shown in a large monospace font.
+- **Type logins into other apps with one hotkey** (Auto-Type and Quick Access).
+- **Keep the papers that matter next to the passwords:** IDs, passports, a will, insurance
+  documents, with notes in Markdown.
+- **Small and local.** No cloud service, no account, no network access, no telemetry.
+
+## Download
+
+Each push to `main` builds both apps in GitHub Actions: open the latest
+[build run](https://github.com/jmonasterio/kee-pass-j/actions/workflows/build.yml) and
+download `OurLogins-windows-x64` (a single `.exe`) or `OurLogins-macos-universal` (an
+`.app` for Intel and Apple silicon). The Mac app is not notarized: the first time,
+right-click it and choose Open. Pushing a `v*` tag publishes both as a GitHub release.
 
 ## Features
 
-- Open, edit, and save `.kdbx` (KDBX 4) databases. Several databases open at once, tabbed.
-- On launch, reopen the last database(s). If the file is missing (USB unplugged) or the
-  password is wrong, fall back to the picker/unlock screen once.
-- Autosave on every change. Writes are atomic (`.tmp` → fsync → rename). Every save also
-  drops a copy into a rolling backup folder in the per-user app data directory (off the
-  USB): the newest 20 saves plus one per day for 30 days. The first save of each session
-  first copies the file as it was on disk, so edits made by other apps are kept too. A
-  KDBX 3.1 file also keeps a permanent `<name>-kdbx3-original.kdbx` copy.
-- Sidebar filters: All accounts (the default), Not working, Documents, folders, Recycle Bin.
-  Folders can be added, coloured and deleted (with their contents, to the Recycle Bin);
-  letter tiles take their folder's colour (Settings can turn that off). Always-visible
-  search box, view/edit/add/delete entries. Notes render readably with optional monospace
-  and per-line copy.
-- Documents (+ Add → Document, Ctrl+Shift+N): an entry for IDs, passports, a will or other
-  papers, with a long text in Markdown (plain line breaks are kept) and attached files.
-  Stored as an ordinary entry with the string field `OurLogins.Kind = document`, so other
-  KeePass clients show it as a normal entry with notes and attachments. The overflow menu
-  turns an account into a document and back.
-- Files on any entry: add (shows the size; asks first when one file is over 5 MB or all
-  files together would pass 50 MB, because every save rewrites them and each of the up to 50
-  backups copies them), open in the usual app (a temporary copy under the app data `open`
-  folder, deleted when the last database locks, at exit and at startup), save as, remove.
-- About (sidebar): version, the project's goals, link to the source on GitHub.
-- "Add account" capture screen: site, URL, username/email, password (generator
-  prefilled), recovery PIN/phone, security questions, notes. Target: under ten seconds
-  to record a new account. If the site already exists it offers to replace the old entry
-  and flags it stale.
-- Stale flag: entries marked "not working" are visibly flagged and sorted to the bottom.
-  Stored as the custom field `KPJ_Stale = 1`, so other KeePass clients still open the file.
-- Generator: ambiguity-free alphabet by default (no `0 O o 1 l I | 5 S 8 B 2 Z`), one
-  length slider, digits and symbols checkboxes. Passwords always displayed in a large
-  monospace font.
-- Auto-Type with KeePass 2.x semantics: global hotkey with window-title matching, and
-  select-entry-then-type. Default sequence `{USERNAME}{TAB}{PASSWORD}{ENTER}`, per-entry
+**Everyday use**
+
+- Sidebar filters: All accounts, Not working, Documents, folders, Recycle Bin. Folders can
+  be added, renamed, coloured and deleted (with their contents, to the Recycle Bin); letter
+  tiles take their folder's colour. Search is always visible (Ctrl+K).
+- "Add account" screen: site, URL, username or email, password (generator prefilled),
+  recovery PIN and phone, security questions, notes. If the site already exists it offers
+  to replace the old entry and flags that one "not working".
+- Generator: no `0 O o 1 l I | 5 S 8 B 2 Z` by default, one length slider, digits and
+  symbols checkboxes.
+- Notes render with optional monospace and copy one line at a time.
+- Auto-Type with KeePass 2.x semantics: a global hotkey matches the current window's title,
+  or type the selected entry. Default sequence `{USERNAME}{TAB}{PASSWORD}{ENTER}`, per-entry
   override, KeePass placeholder grammar. Windows `SendInput`, macOS `CGEvent` via `enigo`
   (macOS asks for the Accessibility permission once).
 - Quick Access: when the hotkey finds several matching accounts or none, a small window
@@ -54,12 +51,46 @@ older KeePass versions do not.
   or Touch ID unlocks the database. The password is kept encrypted with a Windows Hello key,
   or in the login Keychain on macOS (see `src-tauri/src/biometric.rs` for the trade-off).
 
+**Documents and files**
+
+- Documents (+ Add → Document, Ctrl+Shift+N): an entry for IDs, passports, a will or other
+  papers, with a long text in Markdown (plain line breaks are kept) and attached files. The
+  ⋯ menu turns an account into a document and back.
+- Files on any entry: add, open in the usual app, save as, remove. Sizes are shown for each
+  file and for the whole database. Adding asks first when one file is over 5 MB or all files
+  together would pass 50 MB, because every save rewrites them and each of the up to 50
+  backups copies them. Scans of a few MB each are fine; photo collections and videos belong
+  elsewhere.
+- "Open" writes a temporary copy under the app data `open` folder; it is deleted when the
+  last database locks, at exit and at startup.
+
+**Saving and backups**
+
+- Autosave on every change. Writes are atomic (`.tmp` → fsync → rename), so a crash or a
+  pulled USB drive leaves the old file intact.
+- Every save also copies the file into a backup folder in the per-user app data directory:
+  the newest 20 saves plus one per day for 30 days. The first save of each session first
+  copies the file as it was on disk, so edits made by other apps are kept too.
+- Several databases can be open at once. On launch the last ones reopen; if a file is
+  missing (drive not connected) or the password is wrong, the unlock screen shows instead.
+
+**Compatibility with other KeePass apps**
+
+- Reads KDBX 3.1 and 4, writes KDBX 4 (the `keepass` crate writes only KDBX 4). KeePass
+  2.35+ and KeePassXC 2.3+ open KDBX 4. A KDBX 3.1 file keeps a permanent
+  `<name>-kdbx3-original.kdbx` copy from before its first save.
+- Extra data lives in ordinary fields that other clients show and keep: "not working" is the
+  custom field `KPJ_Stale = 1`, a document has `OurLogins.Kind = document`, and a folder
+  colour is group custom data `OurLogins.Color`.
+
 ## Not included
 
-Browser extension, phone, a database shared between two people, second key for
-recovery, web sharing, agent sharing, TOTP, SQLite.
+Browser extension, phone app, syncing one database between several computers, a second key
+for recovery, sharing, TOTP codes.
 
 ## Layout
+
+A Tauri 2 app: a Rust backend, and a TypeScript + Fluent UI frontend in the system webview.
 
 - `src/vault.rs`: KDBX open/save/backup, entry and group model, search, stale flag.
 - `src/generator.rs`: password generator.
