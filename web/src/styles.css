@@ -1262,21 +1262,20 @@ fluent-textarea.doc-text::part(control) {
   gap: 8px;
 }
 
-/* Every password field (unlock, new database, protected custom fields) and every revealed
-   secret uses the monospace password font, so l/1/I and O/0 can be told apart. */
-fluent-text-input[type="password"]::part(control),
+/* Password boxes (password-box.ts) and revealed secrets in the details use the monospace
+   password font, shown or hidden, so l/1/I and O/0 can be told apart. */
+.password-box::part(control),
 .secret {
   font-family: var(--fontFamilyMonospace);
   letter-spacing: 0.02em;
 }
 
-.password-input::part(control) {
-  font-family: var(--fontFamilyMonospace);
+/* The account form's password: bigger, it is read off the screen. */
+.password-box.large::part(control) {
   font-size: var(--fontSizeBase500);
-  letter-spacing: 0.02em;
 }
 
-.password-input {
+.password-box.large {
   height: 40px;
 }
 

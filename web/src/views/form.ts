@@ -1,7 +1,8 @@
 import { api, errorText, type CustomField, type EntryForm, type FormData, type FormFiles, type FormMode, type Id } from "../api";
 import { onClosed } from "../dialogs";
-import { addRevealToggle, button, debounce, el, field, icon, setChildren } from "../dom";
+import { button, debounce, el, field, setChildren } from "../dom";
 import { BACKUP_COPIES, FILE_ADVICE, formatBytes, LARGE_FILE, LARGE_TOTAL } from "../files";
+import { passwordBox, setSecret } from "../password-box";
 import { nav } from "../nav";
 import { toast } from "../toast";
 
@@ -9,14 +10,12 @@ type TextInputEl = HTMLElementTagNameMap["fluent-text-input"];
 type TextAreaEl = HTMLElementTagNameMap["fluent-textarea"];
 type CheckboxEl = HTMLElementTagNameMap["fluent-checkbox"];
 
-function textInput(value: string, opts: { placeholder?: string; secret?: boolean; class?: string; autofocus?: boolean } = {}): TextInputEl {
+function textInput(value: string, opts: { placeholder?: string; class?: string; autofocus?: boolean } = {}): TextInputEl {
   return el("fluent-text-input", {
     class: opts.class,
     value,
     placeholder: opts.placeholder ?? "",
-    type: opts.secret ? "password" : "text",
-    autocomplete: opts.secret ? "off" : undefined,
-    attrs: { spellcheck: opts.secret ? "false" : undefined, autocomplete: opts.secret ? "off" : undefined, autofocus: opts.autofocus },
+    attrs: { autofocus: opts.autofocus },
   });
 }
 
@@ -61,12 +60,9 @@ export async function openForm(mode: FormMode, notesMonospace: boolean): Promise
   const title = textInput(entry.title, { autofocus: true, placeholder: isDoc ? "e.g. Passport" : "e.g. Netflix" });
   const url = textInput(entry.url, { placeholder: "netflix.com" });
   const username = textInput(entry.username);
-  const password = textInput(entry.password, { class: "password-input", secret: true });
-  // The password is generated, so show it in clear text like a normal field.
-  password.type = "text";
-  addRevealToggle(password);
-  const recoveryPin = textInput(entry.recoveryPin, { secret: true });
-  addRevealToggle(recoveryPin);
+  // The password is generated, so it starts in clear text like a normal field.
+  const password = passwordBox({ value: entry.password, shown: true, large: true });
+  const recoveryPin = passwordBox({ value: entry.recoveryPin });
   const recoveryPhone = textInput(entry.recoveryPhone);
   const securityQuestions = textArea(entry.securityQuestions, { secret: true });
   const notes = textArea(entry.notes, {
@@ -167,18 +163,10 @@ export async function openForm(mode: FormMode, notesMonospace: boolean): Promise
   const customList = el("div", { class: "custom-list" });
   const addCustomRow = (cf: CustomField) => {
     const key = textInput(cf.key, { placeholder: "Name" });
-    const value = textInput(cf.value, { placeholder: "Value", secret: cf.protected });
-    // Show/hide for protected values only.
-    const reveal = addRevealToggle(value);
-    reveal.hidden = !cf.protected;
+    const value = passwordBox({ value: cf.value, placeholder: "Value" });
+    setSecret(value, cf.protected);
     const prot = el("fluent-checkbox", { attrs: { checked: cf.protected } });
-    prot.addEventListener("change", () => {
-      value.type = prot.checked ? "password" : "text";
-      reveal.hidden = !prot.checked;
-      setChildren(reveal, icon("eye"));
-      reveal.title = "Show";
-      reveal.setAttribute("aria-label", "Show");
-    });
+    prot.addEventListener("change", () => setSecret(value, prot.checked));
     const item: CustomRow = {
       key,
       value,

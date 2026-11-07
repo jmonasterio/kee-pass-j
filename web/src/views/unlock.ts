@@ -1,5 +1,6 @@
 import { api, errorText, type RecentItem, type UnlockView } from "../api";
-import { button, el, field, icon, secretInput, setChildren } from "../dom";
+import { button, el, field, icon, setChildren } from "../dom";
+import { passwordBox } from "../password-box";
 import { nav } from "../nav";
 
 let view: UnlockView | null = null;
@@ -56,7 +57,7 @@ async function refresh(call: Promise<UnlockView>): Promise<void> {
 function openForm(v: UnlockView, keptPassword: string): HTMLElement {
   const error = el("div", { class: "form-error", attrs: { role: "alert" } });
   errorNode = error;
-  const password = secretInput("Master password");
+  const password = passwordBox({ placeholder: "Master password" });
   password.value = keptPassword;
   passwordInput = password;
 
@@ -231,8 +232,8 @@ function openForm(v: UnlockView, keptPassword: string): HTMLElement {
 function createForm(path: string): HTMLElement {
   const error = el("div", { class: "form-error", attrs: { role: "alert" } });
   errorNode = error;
-  const password = secretInput("Master password");
-  const repeat = secretInput("Repeat the password");
+  const password = passwordBox({ placeholder: "Master password" });
+  const repeat = passwordBox({ placeholder: "Repeat the password" });
   passwordInput = password;
   const createButton = button("Create database", () => void doCreate(), { appearance: "primary" });
 

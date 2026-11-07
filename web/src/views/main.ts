@@ -13,9 +13,10 @@ import {
   type TabItem,
 } from "../api";
 import { confirmDialog, isOverlayOpen, openDialog, promptDialog } from "../dialogs";
-import { button, el, field, icon, secretInput, setChildren, type Child } from "../dom";
+import { button, el, field, icon, setChildren, type Child } from "../dom";
 import { BACKUP_COPIES, FILE_ADVICE, formatBytes, LARGE_FILE, LARGE_TOTAL } from "../files";
 import { renderMarkdown } from "../markdown";
+import { passwordBox } from "../password-box";
 import { nav } from "../nav";
 import { toast } from "../toast";
 import { openForm } from "./form";
@@ -332,9 +333,9 @@ function databaseMenu(index: number, tab: TabItem): HTMLElement {
 }
 
 function changeMasterPassword(index: number, tab: TabItem): void {
-  const current = secretInput("Current master password");
-  const next = secretInput("New master password");
-  const repeat = secretInput("New master password again");
+  const current = passwordBox({ placeholder: "Current master password" });
+  const next = passwordBox({ placeholder: "New master password" });
+  const repeat = passwordBox({ placeholder: "New master password again" });
   const error = el("div", { class: "form-error", attrs: { role: "alert" } });
   let busy = false;
   const submit = async () => {
