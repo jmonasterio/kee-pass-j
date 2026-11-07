@@ -1,3 +1,4 @@
+import { errorText } from "./api";
 import { el } from "./dom";
 
 let node: HTMLElement | null = null;
@@ -16,4 +17,15 @@ export function toast(message: string): void {
   node.showPopover();
   window.clearTimeout(timer);
   timer = window.setTimeout(() => node?.hidePopover(), 2500);
+}
+
+/** Runs a copy command (which answers the seconds until the clipboard is cleared, 0 = never)
+ *  and says what happened. */
+export async function copyAndTell(call: Promise<number>): Promise<void> {
+  try {
+    const seconds = await call;
+    toast(seconds > 0 ? `Copied. Cleared from the clipboard in ${seconds} s.` : "Copied");
+  } catch (err) {
+    toast(errorText(err));
+  }
 }

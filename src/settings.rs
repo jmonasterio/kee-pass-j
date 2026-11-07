@@ -54,6 +54,9 @@ pub struct Settings {
     pub tile_colors: TileColors,
     /// Offer Windows Hello / Touch ID unlock after one unlock with the password.
     pub quick_unlock: bool,
+    /// Seconds after a copy before the clipboard is emptied (if it still holds what was
+    /// copied). 0 keeps it.
+    pub clipboard_clear_seconds: u32,
 }
 
 impl Default for Settings {
@@ -67,6 +70,7 @@ impl Default for Settings {
             notes_monospace: false,
             tile_colors: TileColors::Folder,
             quick_unlock: true,
+            clipboard_clear_seconds: 20,
         }
     }
 }

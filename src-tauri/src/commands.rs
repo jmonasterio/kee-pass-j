@@ -631,15 +631,25 @@ pub async fn reveal_field(state: State<'_, Shared>, field: String) -> R<String> 
     field_value(&selected_entry(&state.lock())?, &field)
 }
 
+/// Copies one field of the selected entry. Returns the seconds until the clipboard is
+/// cleared (0 = it is not).
 #[tauri::command]
-pub async fn copy_field(state: State<'_, Shared>, field: String) -> R<()> {
-    let value = field_value(&selected_entry(&state.lock())?, &field)?;
-    clipboard::copy(&value)
+pub async fn copy_field(state: State<'_, Shared>, field: String) -> R<u32> {
+    let (value, clear) = {
+        let st = state.lock();
+        (field_value(&selected_entry(&st)?, &field)?, st.settings.clipboard_clear_seconds)
+    };
+    clipboard::copy(&value, clear)?;
+    Ok(clear)
 }
 
+/// Copies text from the page (a generated password, a notes line). Returns the seconds until
+/// the clipboard is cleared (0 = it is not).
 #[tauri::command]
-pub async fn copy_text(text: String) -> R<()> {
-    clipboard::copy(&text)
+pub async fn copy_text(state: State<'_, Shared>, text: String) -> R<u32> {
+    let clear = state.lock().settings.clipboard_clear_seconds;
+    clipboard::copy(&text, clear)?;
+    Ok(clear)
 }
 
 #[tauri::command]
@@ -953,6 +963,7 @@ pub async fn settings_get(state: State<'_, Shared>) -> R<SettingsView> {
         },
         backup_dir: settings::backup_policy().dir.display().to_string(),
         quick_unlock: s.quick_unlock,
+        clipboard_clear_seconds: s.clipboard_clear_seconds,
         quick_unlock_name: st.quick_unlock.map(|k| match k {
             biometric::Kind::WindowsHello => "Windows Hello".to_string(),
             biometric::Kind::TouchId => "Touch ID".to_string(),
@@ -981,6 +992,7 @@ pub async fn settings_save(app: AppHandle, state: State<'_, Shared>, settings: S
             }
         }
         s.quick_unlock = settings.quick_unlock;
+        s.clipboard_clear_seconds = settings.clipboard_clear_seconds.min(3600);
         let g = settings.generator;
         s.generator = GenOptions {
             length: g.length.clamp(4, 128),
@@ -1062,8 +1074,11 @@ pub async fn quick_type(app: AppHandle, state: State<'_, Shared>, db: usize, id:
 /// Copies one field of the account and closes Quick Access.
 #[tauri::command]
 pub async fn quick_copy(app: AppHandle, state: State<'_, Shared>, db: usize, id: String, field: String) -> R<()> {
-    let value = field_value(&quick_entry(&state.lock(), db, &id)?, &field)?;
-    clipboard::copy(&value)?;
+    let (value, clear) = {
+        let st = state.lock();
+        (field_value(&quick_entry(&st, db, &id)?, &field)?, st.settings.clipboard_clear_seconds)
+    };
+    clipboard::copy(&value, clear)?;
     if let Some(w) = app.get_webview_window("quick") {
         let _ = w.hide();
     }

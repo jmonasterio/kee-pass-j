@@ -227,7 +227,9 @@ Security rules for the webview:
 - List and detail data never include passwords or other protected values. `copy_field`
   writes the clipboard from Rust (`clipboard.rs`, arboard without image support; marked to
   stay out of Windows clipboard history and cloud sync, and out of macOS clipboard-history
-  apps). `reveal_field` returns one value when the user presses Show. The edit form
+  apps). After `settings.clipboard_clear_seconds` (default 20, 0 = never) and at exit the
+  clipboard is emptied if it still holds the copied text (compared by hash; the text is not
+  kept). `reveal_field` returns one value when the user presses Show. The edit form
   necessarily carries the entry's values.
 - The window runs `incognito`. On Windows, WebView2 general autofill and password autosave
   are off, and release builds disable browser shortcuts (reload, print, find, devtools).

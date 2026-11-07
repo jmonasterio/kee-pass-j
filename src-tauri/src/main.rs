@@ -169,6 +169,8 @@ fn main() {
             if let tauri::RunEvent::Exit = event {
                 saver::flush_all(&app.state::<state::Shared>());
                 commands::clear_open_dir();
+                // A password copied a moment ago must not stay behind after Our Logins quits.
+                clipboard::clear_if_ours();
             }
         });
 }

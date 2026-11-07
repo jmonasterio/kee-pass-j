@@ -280,6 +280,8 @@ pub struct SettingsView {
     pub generator: GeneratorSettings,
     pub backup_dir: String,
     pub quick_unlock: bool,
+    /// Seconds until a copy is cleared from the clipboard; 0 = never, at most 3600.
+    pub clipboard_clear_seconds: u32,
     /// "Touch ID" / "Windows Hello" when this machine has it set up (read-only); `None` hides the option.
     pub quick_unlock_name: Option<String>,
 }

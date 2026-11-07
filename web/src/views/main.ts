@@ -18,7 +18,7 @@ import { BACKUP_COPIES, FILE_ADVICE, formatBytes, LARGE_FILE, LARGE_TOTAL } from
 import { renderMarkdown } from "../markdown";
 import { passwordBox } from "../password-box";
 import { nav } from "../nav";
-import { toast } from "../toast";
+import { copyAndTell, toast } from "../toast";
 import { openForm } from "./form";
 import { openSettings } from "./settings";
 
@@ -667,8 +667,17 @@ function fieldRow(label: string, value: Child, actions: Child[] = [], valueClass
   );
 }
 
+/** Shortcut shown in the Copy button's tooltip, as in KeePass. */
+const COPY_SHORTCUTS: Partial<Record<FieldName, string>> = { username: "Ctrl+B", password: "Ctrl+C" };
+
 function copyButton(field: FieldName): HTMLElement {
-  return button("Copy", () => void attempt(api.copyField(field), "Copied"), { icon: "copy", appearance: "subtle", size: "small" });
+  const shortcut = COPY_SHORTCUTS[field];
+  return button("Copy", () => void copyAndTell(api.copyField(field)), {
+    icon: "copy",
+    appearance: "subtle",
+    size: "small",
+    title: shortcut ? `Copy (${shortcut})` : undefined,
+  });
 }
 
 /** Masked value with Show/Hide (reveal_field) and Copy (copy_field). Hidden again on every re-render. */
@@ -707,7 +716,7 @@ function notesBlock(notes: string, mono: boolean): HTMLElement {
       { class: "note-line" },
       el("span", { class: "note-text" }, line || "\u00a0"),
       line.trim()
-        ? button("copy", () => void attempt(api.copyText(line), "Copied"), { appearance: "transparent", size: "small", class: "note-copy" })
+        ? button("copy", () => void copyAndTell(api.copyText(line)), { appearance: "transparent", size: "small", class: "note-copy" })
         : null,
     ),
   );
@@ -969,7 +978,7 @@ function renderDetail(v: MainView): void {
           "div",
           { class: "field-label-line" },
           el("div", { class: "field-label" }, "Text"),
-          d.notes.trim() ? button("Copy text", () => void attempt(api.copyText(d.notes), "Copied"), { icon: "copy", appearance: "subtle", size: "small" }) : null,
+          d.notes.trim() ? button("Copy text", () => void copyAndTell(api.copyText(d.notes)), { icon: "copy", appearance: "subtle", size: "small" }) : null,
         ),
         body,
       ),
@@ -1049,7 +1058,8 @@ function moveSelection(delta: number): void {
   void run(api.selectEntry(view.entries[next].id));
 }
 
-/** Page shortcuts: Ctrl+K/F search, Ctrl+N add account (Ctrl+Shift+N document), Up/Down select, Esc clears search. */
+/** Page shortcuts: Ctrl+K/F search, Ctrl+N add account (Ctrl+Shift+N document), Ctrl+B/C copy the
+ *  username/password and Ctrl+U opens the website (as in KeePass), Up/Down select, Esc clears search. */
 export function mainKeydown(event: KeyboardEvent): void {
   if (!view || isOverlayOpen() || event.isComposing) return;
   const mod = event.ctrlKey || event.metaKey;
@@ -1064,6 +1074,31 @@ export function mainKeydown(event: KeyboardEvent): void {
     event.preventDefault();
     // In the Documents list, or with Shift, a new entry is a document.
     void openForm(event.shiftKey || view.filter.kind === "documents" ? "addDocument" : "add", view.notesMonospace);
+    return;
+  }
+  // KeePass shortcuts for the selected entry: Ctrl+B copies the username, Ctrl+C the password,
+  // Ctrl+U opens the URL. Text boxes keep their own Ctrl+C when text is selected in them.
+  if (mod && !event.altKey && !event.shiftKey && (key === "b" || key === "c" || key === "u") && view.detail) {
+    const d = view.detail;
+    const inSearch = event.target === searchInput;
+    if (!inSearch && isTextTarget(event.target)) return;
+    if (key === "c") {
+      const box = inSearch ? searchInput.shadowRoot?.querySelector("input") : null;
+      const textSelected = box ? box.selectionStart !== box.selectionEnd : !(document.getSelection()?.isCollapsed ?? true);
+      if (textSelected) return;
+    }
+    event.preventDefault();
+    if (key === "b") {
+      if (d.username) void copyAndTell(api.copyField("username"));
+      else toast("This entry has no username.");
+    } else if (key === "c") {
+      if (d.hasPassword) void copyAndTell(api.copyField("password"));
+      else toast("This entry has no password.");
+    } else if (d.url) {
+      void attempt(api.openUrl(d.url));
+    } else {
+      toast("This entry has no website.");
+    }
     return;
   }
   if (event.key === "Escape" && event.target === searchInput) {

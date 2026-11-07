@@ -253,6 +253,8 @@ export interface SettingsView {
   generator: GeneratorSettings;
   backupDir: string;
   quickUnlock: boolean;
+  /** Seconds until a copy is cleared from the clipboard; 0 = never. */
+  clipboardClearSeconds: number;
   /** "Touch ID" / "Windows Hello" when the machine has it set up; null hides the option. */
   quickUnlockName: string | null;
 }
@@ -321,8 +323,10 @@ export const api = {
   saveAttachment: (name: string) => invoke<string | null>("save_attachment", { name }),
   removeAttachment: (name: string) => invoke<MainView>("remove_attachment", { name }),
   revealField: (field: FieldName) => invoke<string>("reveal_field", { field }),
-  copyField: (field: FieldName) => invoke<void>("copy_field", { field }),
-  copyText: (text: string) => invoke<void>("copy_text", { text }),
+  /** Returns the seconds until the clipboard is cleared (0 = it is not). */
+  copyField: (field: FieldName) => invoke<number>("copy_field", { field }),
+  /** Returns the seconds until the clipboard is cleared (0 = it is not). */
+  copyText: (text: string) => invoke<number>("copy_text", { text }),
   openUrl: (url: string) => invoke<void>("open_url", { url }),
   retrySave: () => invoke<MainView>("retry_save"),
 

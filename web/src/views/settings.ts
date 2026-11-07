@@ -50,6 +50,21 @@ export async function openSettings(): Promise<void> {
   const folderColors = toggle("Colour tiles by folder", current.tileColors === "folder");
   const notesMonospace = toggle("Monospace notes", current.notesMonospace);
   const quickUnlock = current.quickUnlockName ? toggle(`Unlock with ${current.quickUnlockName}`, current.quickUnlock) : null;
+  const clearChoices = [0, 10, 20, 30, 60, 120];
+  if (!clearChoices.includes(current.clipboardClearSeconds)) clearChoices.push(current.clipboardClearSeconds);
+  const clipboardClear = el(
+    "fluent-dropdown",
+    { class: "clipboard-dropdown", attrs: { "aria-label": "Clear the clipboard after" } },
+    el(
+      "fluent-listbox",
+      null,
+      clearChoices
+        .sort((a, b) => a - b)
+        .map((s) =>
+          el("fluent-option", { attrs: { value: String(s), selected: s === current.clipboardClearSeconds } }, s === 0 ? "Never" : `${s} seconds`),
+        ),
+    ),
+  );
 
   const length = Math.min(128, Math.max(4, current.generator.length));
   const lengthLabel = el("span", { class: "slider-value" }, String(length));
@@ -83,6 +98,7 @@ export async function openSettings(): Promise<void> {
       },
       backupDir: current.backupDir,
       quickUnlock: quickUnlock ? quickUnlock.checked : current.quickUnlock,
+      clipboardClearSeconds: Number(clipboardClear.value),
       quickUnlockName: current.quickUnlockName,
     };
     busy = true;
@@ -125,6 +141,12 @@ export async function openSettings(): Promise<void> {
           )
         : null,
       row("text", "Monospace notes", "Show notes in a fixed-width font, so columns line up.", notesMonospace),
+      row(
+        "copy",
+        "Clear the clipboard",
+        "After you copy a password, empty the clipboard this long afterwards, unless you copied something else meanwhile.",
+        clipboardClear,
+      ),
       row(
         "folder",
         "Colour tiles by folder",

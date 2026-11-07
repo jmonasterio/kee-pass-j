@@ -47,6 +47,10 @@ right-click it and choose Open. Pushing a `v*` tag publishes both as a GitHub re
   `CGEvent` via `enigo` (macOS asks for the Accessibility permission once).
 - Copying a password (or anything else) keeps it out of Windows clipboard history (Win+V)
   and cloud clipboard sync; on macOS it carries the marker clipboard-history apps honour.
+  The clipboard is emptied 20 seconds later (Settings: Never to 120 s), and when Our Logins
+  quits, unless something else was copied meanwhile.
+- KeePass shortcuts on the selected entry: Ctrl+B copies the username, Ctrl+C the password,
+  Ctrl+U opens the website.
 - Quick Access: when the hotkey finds several matching accounts or none, a small window
   opens over the current app to pick or search one; Enter types it, Ctrl+Enter copies the
   password.

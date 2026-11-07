@@ -4,7 +4,7 @@ import { button, debounce, el, field, setChildren } from "../dom";
 import { BACKUP_COPIES, FILE_ADVICE, formatBytes, LARGE_FILE, LARGE_TOTAL } from "../files";
 import { passwordBox, setSecret } from "../password-box";
 import { nav } from "../nav";
-import { toast } from "../toast";
+import { copyAndTell, toast } from "../toast";
 
 type TextInputEl = HTMLElementTagNameMap["fluent-text-input"];
 type TextAreaEl = HTMLElementTagNameMap["fluent-textarea"];
@@ -264,18 +264,7 @@ export async function openForm(mode: FormMode, notesMonospace: boolean): Promise
         "div",
         { class: "password-actions" },
         button("Regenerate", () => void regenerate(), { icon: "refresh" }),
-        button(
-          "Copy",
-          async () => {
-            try {
-              await api.copyText(password.value);
-              toast("Copied");
-            } catch (err) {
-              toast(errorText(err));
-            }
-          },
-          { icon: "copy" },
-        ),
+        button("Copy", () => void copyAndTell(api.copyText(password.value)), { icon: "copy" }),
       ),
       el(
         "div",
