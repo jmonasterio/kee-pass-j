@@ -1,6 +1,6 @@
 import { api, errorText, type CustomField, type EntryForm, type FormData, type FormFiles, type FormMode, type Id } from "../api";
 import { onClosed } from "../dialogs";
-import { button, debounce, el, field, setChildren } from "../dom";
+import { addRevealToggle, button, debounce, el, field, icon, setChildren } from "../dom";
 import { BACKUP_COPIES, FILE_ADVICE, formatBytes, LARGE_FILE, LARGE_TOTAL } from "../files";
 import { nav } from "../nav";
 import { toast } from "../toast";
@@ -64,7 +64,9 @@ export async function openForm(mode: FormMode, notesMonospace: boolean): Promise
   const password = textInput(entry.password, { class: "password-input", secret: true });
   // The password is generated, so show it in clear text like a normal field.
   password.type = "text";
+  addRevealToggle(password);
   const recoveryPin = textInput(entry.recoveryPin, { secret: true });
+  addRevealToggle(recoveryPin);
   const recoveryPhone = textInput(entry.recoveryPhone);
   const securityQuestions = textArea(entry.securityQuestions, { secret: true });
   const notes = textArea(entry.notes, {
@@ -166,9 +168,16 @@ export async function openForm(mode: FormMode, notesMonospace: boolean): Promise
   const addCustomRow = (cf: CustomField) => {
     const key = textInput(cf.key, { placeholder: "Name" });
     const value = textInput(cf.value, { placeholder: "Value", secret: cf.protected });
+    // Show/hide for protected values only.
+    const reveal = addRevealToggle(value);
+    reveal.hidden = !cf.protected;
     const prot = el("fluent-checkbox", { attrs: { checked: cf.protected } });
     prot.addEventListener("change", () => {
       value.type = prot.checked ? "password" : "text";
+      reveal.hidden = !prot.checked;
+      setChildren(reveal, icon("eye"));
+      reveal.title = "Show";
+      reveal.setAttribute("aria-label", "Show");
     });
     const item: CustomRow = {
       key,

@@ -194,6 +194,46 @@ export function button(
   );
 }
 
+/** Edge and WebView2 draw their own reveal eye inside password boxes. Ours replaces it so
+ *  every password box has one button, on macOS too. Fluent keeps the <input> in its shadow
+ *  root, out of reach of the page's CSS, so the rule goes into that root. */
+let nativeRevealHidden: CSSStyleSheet | undefined;
+
+/** Adds a show/hide button at the end of a Fluent text input used for secrets. */
+export function addRevealToggle(input: HTMLElementTagNameMap["fluent-text-input"]): HTMLElementTagNameMap["fluent-button"] {
+  const root = input.shadowRoot;
+  if (root) {
+    if (!nativeRevealHidden) {
+      nativeRevealHidden = new CSSStyleSheet();
+      nativeRevealHidden.replaceSync("input::-ms-reveal { display: none; }");
+    }
+    root.adoptedStyleSheets = [...root.adoptedStyleSheets, nativeRevealHidden];
+  }
+  const toggle: HTMLElementTagNameMap["fluent-button"] = button(
+    null,
+    () => {
+      const show = input.type === "password";
+      input.type = show ? "text" : "password";
+      setChildren(toggle, icon(show ? "eyeOff" : "eye"));
+      toggle.title = show ? "Hide" : "Show";
+      toggle.setAttribute("aria-label", toggle.title);
+      input.focus();
+    },
+    {
+      icon: input.type === "password" ? "eye" : "eyeOff",
+      appearance: "transparent",
+      size: "small",
+      title: input.type === "password" ? "Show" : "Hide",
+      class: "reveal-toggle",
+    },
+  );
+  toggle.setAttribute("slot", "end");
+  // Clicking the button must not take focus away from the text.
+  toggle.addEventListener("mousedown", (event) => event.preventDefault());
+  input.append(toggle);
+  return toggle;
+}
+
 /** Password box with a show/hide button at its end. */
 export function secretInput(placeholder: string): HTMLElementTagNameMap["fluent-text-input"] {
   const input = el("fluent-text-input", {
@@ -202,22 +242,7 @@ export function secretInput(placeholder: string): HTMLElementTagNameMap["fluent-
     autocomplete: "off",
     attrs: { spellcheck: "false", autocomplete: "off" },
   });
-  const toggle: HTMLElementTagNameMap["fluent-button"] = button(
-    null,
-    () => {
-      const shown = input.type === "password";
-      input.type = shown ? "text" : "password";
-      setChildren(toggle, icon(shown ? "eyeOff" : "eye"));
-      toggle.title = shown ? "Hide password" : "Show password";
-      toggle.setAttribute("aria-label", toggle.title);
-      input.focus();
-    },
-    { icon: "eye", appearance: "transparent", size: "small", title: "Show password", class: "reveal-toggle" },
-  );
-  toggle.setAttribute("slot", "end");
-  // Clicking the button must not take focus away from the text.
-  toggle.addEventListener("mousedown", (event) => event.preventDefault());
-  input.append(toggle);
+  addRevealToggle(input);
   return input;
 }
 
