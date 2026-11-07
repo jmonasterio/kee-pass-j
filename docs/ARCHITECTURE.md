@@ -109,7 +109,7 @@ pub const AMBIGUOUS: &str = "0Oo1lI|5S8B2Z";
 pub const SYMBOLS: &str = "!@#$%&*?-_=+";          // readable subset only
 pub struct GenOptions { pub length: usize, pub digits: bool, pub symbols: bool, pub uppercase: bool, pub exclude_ambiguous: bool }
 impl Default for GenOptions  // length 16, digits true, symbols false, uppercase true, exclude_ambiguous true
-pub fn generate(opts: &GenOptions) -> String;   // rand::rng(); guarantees at least one char from every enabled class when length >= enabled classes
+pub fn generate(opts: &GenOptions) -> String;   // OS random source (getrandom) with rejection sampling; guarantees at least one char from every enabled class when length >= enabled classes
 pub fn alphabet(opts: &GenOptions) -> String;   // the exact charset used
 ```
 
@@ -138,7 +138,8 @@ pub fn backup_policy() -> vault::BackupPolicy;  // dir = data_dir()/backups, 20,
 ## `autotype`
 
 ```rust
-pub enum Token { Field(String), Key(enigo::Key), Char(char), Delay(u64), Modified(Modifiers, Box<Token>) }
+pub enum Token { Field(String), Key(Key), Char(char), Delay(u64), Modified(Modifiers, Box<Token>) }
+pub enum Key { Tab, Enter, Space, Backspace, Delete, Escape, Home, End, Up, Down, Left, Right, PageUp, PageDown, Insert, F(u8) }  // Insert fails on macOS (no such key)
 pub struct Modifiers { pub shift: bool, pub ctrl: bool, pub alt: bool }
 /// KeePass 2.x grammar: `{USERNAME}` `{PASSWORD}` `{URL}` `{TITLE}` `{NOTES}` `{S:Field Name}`,
 /// `{TAB}` `{ENTER}` `{SPACE}` `{BACKSPACE}` `{DELETE}` `{ESC}` `{HOME}` `{END}` `{UP}` `{DOWN}` `{LEFT}` `{RIGHT}` `{F1}`..`{F12}`,
@@ -148,7 +149,7 @@ pub struct Modifiers { pub shift: bool, pub ctrl: bool, pub alt: bool }
 pub fn parse_sequence(seq: &str) -> Result<Vec<Token>, AutotypeError>;
 /// Types the sequence. `resolve` maps field names (upper-case standard names or `S:` custom names) to values.
 pub fn perform(tokens: &[Token], resolve: &dyn Fn(&str) -> Option<String>) -> Result<(), AutotypeError>;
-pub fn active_window_title() -> Option<String>;
+pub fn active_window_title() -> Option<String>;  // src/input.rs: Windows GetForegroundWindow; macOS frontmost app's layer-0 window via CGWindowListCopyWindowInfo (empty without Screen Recording permission)
 /// KeePass window matching: pattern `//regex//` is a regex; otherwise `*` wildcards, case-insensitive, whole-title match.
 pub fn window_matches(pattern: &str, title: &str) -> bool;
 /// Default association: entry title (non-empty, >= 3 chars) appears in the window title, case-insensitive.
@@ -224,10 +225,12 @@ Security rules for the webview:
   `eval`; `connect-src` is limited to Tauri IPC. A navigation guard keeps the webview on the
   app's own pages; links open in the browser through `open_url`.
 - List and detail data never include passwords or other protected values. `copy_field`
-  writes the clipboard from Rust. `reveal_field` returns one value when the user presses
-  Show. The edit form necessarily carries the entry's values.
+  writes the clipboard from Rust (`clipboard.rs`, arboard without image support; marked to
+  stay out of Windows clipboard history and cloud sync, and out of macOS clipboard-history
+  apps). `reveal_field` returns one value when the user presses Show. The edit form
+  necessarily carries the entry's values.
 - The window runs `incognito`. On Windows, WebView2 general autofill and password autosave
   are off, and release builds disable browser shortcuts (reload, print, find, devtools).
 - Capabilities (`src-tauri/capabilities/default.json`) grant both windows only event
-  listening and window dragging. File, dialog and clipboard plugins are used from Rust only.
+  listening and window dragging. File dialogs and the clipboard are used from Rust only.
   Quick Access receives account titles and usernames, never passwords.

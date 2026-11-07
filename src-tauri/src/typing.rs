@@ -1,6 +1,6 @@
 //! Global hotkey and Auto-Type: window matching, Quick Access, hiding our window while typing.
 //!
-//! `GlobalHotKeyManager` and the keystroke injection (`enigo`) run on the main thread:
+//! `GlobalHotKeyManager` and the keystroke injection (`src/input.rs`) run on the main thread:
 //! the manager's hidden window lives on the thread that created it, and macOS keyboard
 //! layout lookups must happen on the main thread.
 

@@ -111,11 +111,14 @@ fn into_password(mut bytes: Zeroizing<Vec<u8>>) -> Result<Zeroizing<String>, Str
 }
 
 /// File format and encryption of the Windows store. Pure functions, tested without Windows Hello.
+/// SHA-256 and AES-256-GCM come from Windows' own crypto library (BCrypt).
 #[cfg(windows)]
 mod sealed {
-    use aes_gcm::aead::{Aead, KeyInit, Payload};
-    use aes_gcm::{Aes256Gcm, Key, Nonce};
-    use sha2::{Digest, Sha256};
+    use windows::Win32::Security::Cryptography::{
+        BCryptDecrypt, BCryptDestroyKey, BCryptEncrypt, BCryptGenerateSymmetricKey, BCryptHash, BCRYPT_AES_GCM_ALG_HANDLE,
+        BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO, BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO_VERSION, BCRYPT_FLAGS, BCRYPT_KEY_HANDLE,
+        BCRYPT_SHA256_ALG_HANDLE,
+    };
     use zeroize::Zeroizing;
 
     const MAGIC: &[u8; 4] = b"OLQU";
@@ -127,28 +130,84 @@ mod sealed {
     const HEADER_LEN: usize = AAD_LEN + NONCE_LEN;
     const TAG_LEN: usize = 16;
 
+    fn sha256(data: &[u8]) -> [u8; 32] {
+        let mut out = [0u8; 32];
+        let status = unsafe { BCryptHash(BCRYPT_SHA256_ALG_HANDLE, None, data, &mut out) };
+        assert!(status.is_ok(), "SHA-256 failed: {status:?}");
+        out
+    }
+
+    /// An AES-256-GCM key handle, destroyed on drop.
+    struct GcmKey(BCRYPT_KEY_HANDLE);
+
+    impl GcmKey {
+        fn new(key: &[u8; 32]) -> GcmKey {
+            let mut handle = BCRYPT_KEY_HANDLE::default();
+            let status = unsafe { BCryptGenerateSymmetricKey(BCRYPT_AES_GCM_ALG_HANDLE, &mut handle, None, key, 0) };
+            assert!(status.is_ok(), "AES key setup failed: {status:?}");
+            GcmKey(handle)
+        }
+    }
+
+    impl Drop for GcmKey {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = BCryptDestroyKey(self.0);
+            }
+        }
+    }
+
+    fn mode_info(nonce: &[u8], aad: &[u8], tag: &mut [u8; TAG_LEN]) -> BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO {
+        BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO {
+            cbSize: std::mem::size_of::<BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO>() as u32,
+            dwInfoVersion: BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO_VERSION,
+            pbNonce: nonce.as_ptr() as *mut u8,
+            cbNonce: nonce.len() as u32,
+            pbAuthData: aad.as_ptr() as *mut u8,
+            cbAuthData: aad.len() as u32,
+            pbTag: tag.as_mut_ptr(),
+            cbTag: TAG_LEN as u32,
+            ..Default::default()
+        }
+    }
+
     /// File name for a database: lowercase hex SHA-256 of its path key.
     pub fn file_name(path_key: &str) -> String {
-        hex(&Sha256::digest(path_key.as_bytes()))
+        hex(&sha256(path_key.as_bytes()))
     }
 
     /// AES-256 key derived from a Windows Hello signature.
     pub fn key_from_signature(signature: &[u8]) -> Zeroizing<[u8; 32]> {
-        Zeroizing::new(Sha256::digest(signature).into())
+        Zeroizing::new(sha256(signature))
     }
 
-    /// Encrypts `plaintext` and returns the complete file content.
+    /// Encrypts `plaintext` and returns the complete file content:
+    /// magic, version, challenge, nonce, ciphertext, tag.
     pub fn seal(key: &[u8; 32], challenge: &[u8; CHALLENGE_LEN], nonce: &[u8; NONCE_LEN], plaintext: &[u8]) -> Vec<u8> {
         let mut out = Vec::with_capacity(HEADER_LEN + plaintext.len() + TAG_LEN);
         out.extend_from_slice(MAGIC);
         out.push(VERSION);
         out.extend_from_slice(challenge);
-        let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
-        let ciphertext = cipher
-            .encrypt(Nonce::from_slice(nonce), Payload { msg: plaintext, aad: &out })
-            .expect("AES-GCM encryption of a short buffer cannot fail");
+        let mut tag = [0u8; TAG_LEN];
+        let mut ciphertext = vec![0u8; plaintext.len()];
+        let info = mode_info(nonce, &out, &mut tag);
+        let gcm = GcmKey::new(key);
+        let mut written = 0u32;
+        let status = unsafe {
+            BCryptEncrypt(
+                gcm.0,
+                Some(plaintext),
+                Some(&info as *const _ as *const core::ffi::c_void),
+                None,
+                Some(&mut ciphertext),
+                &mut written,
+                BCRYPT_FLAGS(0),
+            )
+        };
+        assert!(status.is_ok(), "AES-GCM encryption failed: {status:?}");
         out.extend_from_slice(nonce);
-        out.extend_from_slice(&ciphertext);
+        out.extend_from_slice(&ciphertext[..written as usize]);
+        out.extend_from_slice(&tag);
         out
     }
 
@@ -167,18 +226,30 @@ mod sealed {
     /// Hello key was recreated.
     pub fn open(key: &[u8; 32], file: &[u8]) -> Result<Zeroizing<Vec<u8>>, String> {
         challenge(file)?;
-        let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
-        cipher
-            .decrypt(
-                Nonce::from_slice(&file[AAD_LEN..HEADER_LEN]),
-                Payload { msg: &file[HEADER_LEN..], aad: &file[..AAD_LEN] },
+        let (body, tag) = file[HEADER_LEN..].split_at(file.len() - HEADER_LEN - TAG_LEN);
+        let mut tag: [u8; TAG_LEN] = tag.try_into().expect("split at TAG_LEN");
+        let info = mode_info(&file[AAD_LEN..HEADER_LEN], &file[..AAD_LEN], &mut tag);
+        let gcm = GcmKey::new(key);
+        let mut plaintext = Zeroizing::new(vec![0u8; body.len()]);
+        let mut written = 0u32;
+        let status = unsafe {
+            BCryptDecrypt(
+                gcm.0,
+                Some(body),
+                Some(&info as *const _ as *const core::ffi::c_void),
+                None,
+                Some(&mut plaintext[..]),
+                &mut written,
+                BCRYPT_FLAGS(0),
             )
-            .map(Zeroizing::new)
-            .map_err(|_| {
-                "The stored quick unlock password no longer matches your Windows Hello key. \
-                 Unlock with the master password to set up quick unlock again."
-                    .to_owned()
-            })
+        };
+        if !status.is_ok() {
+            return Err("The stored quick unlock password no longer matches your Windows Hello key. \
+                        Unlock with the master password to set up quick unlock again."
+                .to_owned());
+        }
+        plaintext.truncate(written as usize);
+        Ok(plaintext)
     }
 
     pub fn random<const N: usize>() -> Result<[u8; N], String> {
@@ -628,6 +699,17 @@ mod tests {
         assert_eq!(&*sealed::open(&KEY, &file).unwrap(), "pässwörd".as_bytes());
         let password = super::into_password(sealed::open(&KEY, &file).unwrap()).unwrap();
         assert_eq!(password.as_str(), "pässwörd");
+    }
+
+    /// Files written by the earlier `aes-gcm` build must still open. The expected bytes come
+    /// from an independent AES-256-GCM (Python `cryptography`) over the same inputs.
+    #[test]
+    fn seal_matches_independent_aes_gcm() {
+        let expected = "4f4c5155010909090909090909090909090909090909090909090909090909090909090909\
+                        030303030303030303030303553d0770295f9df408240053f17d0e39c42a016e64af2856d8d4";
+        let file = sealed::seal(&KEY, &CHALLENGE, &NONCE, "pässwörd".as_bytes());
+        let hex: String = file.iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(hex, expected);
     }
 
     #[test]

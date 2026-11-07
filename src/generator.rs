@@ -1,6 +1,5 @@
 //! Random password generation.
 
-use rand::seq::{IndexedRandom, SliceRandom};
 use serde::{Deserialize, Serialize};
 
 /// Characters that are easy to confuse with each other in common fonts.
@@ -69,18 +68,34 @@ pub fn generate(opts: &GenOptions) -> String {
     }
     let classes = classes(opts);
     let all: Vec<char> = classes.iter().flatten().copied().collect();
-    let mut rng = rand::rng();
     let mut chars: Vec<char> = Vec::with_capacity(opts.length);
     if opts.length >= classes.len() {
         for class in &classes {
-            chars.push(*class.choose(&mut rng).expect("class is non-empty"));
+            chars.push(class[random_below(class.len())]);
         }
     }
     while chars.len() < opts.length {
-        chars.push(*all.choose(&mut rng).expect("alphabet is non-empty"));
+        chars.push(all[random_below(all.len())]);
     }
-    chars.shuffle(&mut rng);
+    // Fisher–Yates, so the one-per-class characters do not sit at the start.
+    for i in (1..chars.len()).rev() {
+        chars.swap(i, random_below(i + 1));
+    }
     chars.into_iter().collect()
+}
+
+/// Uniform number in `0..n` (n > 0) from the operating system's random source. Values from
+/// the top of the 32-bit range that would make small numbers likelier are drawn again.
+fn random_below(n: usize) -> usize {
+    let n = n as u64;
+    let range = 1u64 << 32;
+    let limit = range - range % n;
+    loop {
+        let r = u64::from(getrandom::u32().expect("the operating system's random source failed"));
+        if r < limit {
+            return (r % n) as usize;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -129,5 +144,20 @@ mod tests {
         let opts = GenOptions { digits: false, uppercase: false, symbols: false, ..Default::default() };
         let p = generate(&opts);
         assert!(p.chars().all(|c| c.is_ascii_lowercase()), "{p}");
+    }
+
+    #[test]
+    fn random_below_stays_in_range_and_reaches_every_value() {
+        assert_eq!(random_below(1), 0);
+        for n in [2usize, 3, 7, 62] {
+            let mut seen = vec![0u32; n];
+            for _ in 0..n * 200 {
+                let r = random_below(n);
+                assert!(r < n, "{r} >= {n}");
+                seen[r] += 1;
+            }
+            // About 200 each; a value never drawn would mean a broken mapping.
+            assert!(seen.iter().all(|&c| c > 100), "n={n}: {seen:?}");
+        }
     }
 }

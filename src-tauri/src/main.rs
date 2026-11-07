@@ -1,6 +1,7 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod biometric;
+mod clipboard;
 mod commands;
 mod dto;
 mod saver;
@@ -82,7 +83,6 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(navigation_guard())
         .manage(state::Shared::new())
         .setup(|app| {

@@ -5,7 +5,6 @@
 use std::path::{Path, PathBuf};
 
 use tauri::{AppHandle, Manager, State};
-use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_dialog::{DialogExt, FileDialogBuilder};
 
 use ourlogins::autotype;
@@ -14,8 +13,9 @@ use ourlogins::settings;
 use ourlogins::vault::{self, CustomField, EntryEdit, EntryView, Vault};
 
 use crate::biometric;
-use crate::saver;
+use crate::clipboard;
 use crate::dto::*;
+use crate::saver;
 use crate::state::{filter_shows, folders, ordered_groups, parse_entry_id, parse_filter, parse_group_id, AppState, Filter, OpenDb, Shared};
 use crate::typing;
 
@@ -632,14 +632,14 @@ pub async fn reveal_field(state: State<'_, Shared>, field: String) -> R<String> 
 }
 
 #[tauri::command]
-pub async fn copy_field(app: AppHandle, state: State<'_, Shared>, field: String) -> R<()> {
+pub async fn copy_field(state: State<'_, Shared>, field: String) -> R<()> {
     let value = field_value(&selected_entry(&state.lock())?, &field)?;
-    app.clipboard().write_text(value).map_err(|e| format!("Could not copy: {e}"))
+    clipboard::copy(&value)
 }
 
 #[tauri::command]
-pub async fn copy_text(app: AppHandle, text: String) -> R<()> {
-    app.clipboard().write_text(text).map_err(|e| format!("Could not copy: {e}"))
+pub async fn copy_text(text: String) -> R<()> {
+    clipboard::copy(&text)
 }
 
 #[tauri::command]
@@ -1063,7 +1063,7 @@ pub async fn quick_type(app: AppHandle, state: State<'_, Shared>, db: usize, id:
 #[tauri::command]
 pub async fn quick_copy(app: AppHandle, state: State<'_, Shared>, db: usize, id: String, field: String) -> R<()> {
     let value = field_value(&quick_entry(&state.lock(), db, &id)?, &field)?;
-    app.clipboard().write_text(value).map_err(|e| format!("Could not copy: {e}"))?;
+    clipboard::copy(&value)?;
     if let Some(w) = app.get_webview_window("quick") {
         let _ = w.hide();
     }

@@ -3,9 +3,32 @@
 use std::thread::sleep;
 use std::time::Duration;
 
-use enigo::{Direction, Enigo, Key, Keyboard, Settings};
 use global_hotkey::hotkey::HotKey;
 use thiserror::Error;
+
+use crate::input::{Direction, Keyboard, Modifier};
+
+/// A named key in an Auto-Type sequence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Key {
+    Tab,
+    Enter,
+    Space,
+    Backspace,
+    Delete,
+    Escape,
+    Home,
+    End,
+    Up,
+    Down,
+    Left,
+    Right,
+    PageUp,
+    PageDown,
+    Insert,
+    /// F1 to F12.
+    F(u8),
+}
 
 /// Gap between two consecutive tokens while typing.
 const TOKEN_GAP: Duration = Duration::from_millis(10);
@@ -42,16 +65,16 @@ impl Modifiers {
         !(self.shift || self.ctrl || self.alt)
     }
 
-    fn keys(self) -> Vec<Key> {
+    fn keys(self) -> Vec<Modifier> {
         let mut keys = Vec::with_capacity(3);
         if self.shift {
-            keys.push(Key::Shift);
+            keys.push(Modifier::Shift);
         }
         if self.ctrl {
-            keys.push(Key::Control);
+            keys.push(Modifier::Control);
         }
         if self.alt {
-            keys.push(Key::Alt);
+            keys.push(Modifier::Alt);
         }
         keys
     }
@@ -193,35 +216,24 @@ fn placeholder(body: &str) -> Result<Vec<Token>, AutotypeError> {
     let token = match upper.as_str() {
         "USERNAME" | "PASSWORD" | "URL" | "TITLE" | "NOTES" => Token::Field(upper.clone()),
         "TAB" => Token::Key(Key::Tab),
-        "ENTER" => Token::Key(Key::Return),
+        "ENTER" => Token::Key(Key::Enter),
         "SPACE" => Token::Key(Key::Space),
         "BACKSPACE" | "BS" | "BKSP" => Token::Key(Key::Backspace),
         "DELETE" | "DEL" => Token::Key(Key::Delete),
         "ESC" | "ESCAPE" => Token::Key(Key::Escape),
         "HOME" => Token::Key(Key::Home),
         "END" => Token::Key(Key::End),
-        "UP" => Token::Key(Key::UpArrow),
-        "DOWN" => Token::Key(Key::DownArrow),
-        "LEFT" => Token::Key(Key::LeftArrow),
-        "RIGHT" => Token::Key(Key::RightArrow),
+        "UP" => Token::Key(Key::Up),
+        "DOWN" => Token::Key(Key::Down),
+        "LEFT" => Token::Key(Key::Left),
+        "RIGHT" => Token::Key(Key::Right),
         "PGUP" | "PAGEUP" => Token::Key(Key::PageUp),
         "PGDN" | "PAGEDOWN" => Token::Key(Key::PageDown),
-        // macOS keyboards have no Insert key and enigo does not define Key::Insert there;
-        // `{INSERT}` falls through to UnknownPlaceholder on macOS.
-        #[cfg(not(target_os = "macos"))]
+        // Mac keyboards have no Insert key; typing it there reports an error.
         "INSERT" | "INS" => Token::Key(Key::Insert),
-        "F1" => Token::Key(Key::F1),
-        "F2" => Token::Key(Key::F2),
-        "F3" => Token::Key(Key::F3),
-        "F4" => Token::Key(Key::F4),
-        "F5" => Token::Key(Key::F5),
-        "F6" => Token::Key(Key::F6),
-        "F7" => Token::Key(Key::F7),
-        "F8" => Token::Key(Key::F8),
-        "F9" => Token::Key(Key::F9),
-        "F10" => Token::Key(Key::F10),
-        "F11" => Token::Key(Key::F11),
-        "F12" => Token::Key(Key::F12),
+        f if f.len() >= 2 && f.starts_with('F') && f[1..].parse::<u8>().is_ok_and(|n| (1..=12).contains(&n)) => {
+            Token::Key(Key::F(f[1..].parse().expect("checked above")))
+        }
         _ => return Err(AutotypeError::UnknownPlaceholder(body.to_string())),
     };
     let count = match arg {
@@ -238,47 +250,46 @@ fn placeholder(body: &str) -> Result<Vec<Token>, AutotypeError> {
 /// Types `tokens` into the focused window. `resolve` maps field names to values; a field
 /// that resolves to `None` types nothing, matching KeePass.
 pub fn perform(tokens: &[Token], resolve: &dyn Fn(&str) -> Option<String>) -> Result<(), AutotypeError> {
-    let mut enigo = Enigo::new(&Settings::default()).map_err(|e| AutotypeError::Init(e.to_string()))?;
+    let mut keyboard = Keyboard::new().map_err(AutotypeError::Init)?;
     for (i, token) in tokens.iter().enumerate() {
         if i > 0 {
             sleep(TOKEN_GAP);
         }
-        type_token(&mut enigo, token, resolve)?;
+        type_token(&mut keyboard, token, resolve).map_err(AutotypeError::Input)?;
     }
     Ok(())
 }
 
-fn type_token(enigo: &mut Enigo, token: &Token, resolve: &dyn Fn(&str) -> Option<String>) -> Result<(), AutotypeError> {
-    let input = |r: Result<(), enigo::InputError>| r.map_err(|e| AutotypeError::Input(e.to_string()));
+fn type_token(kb: &mut Keyboard, token: &Token, resolve: &dyn Fn(&str) -> Option<String>) -> Result<(), String> {
     match token {
         Token::Field(name) => {
             if let Some(value) = resolve(name) {
                 if !value.is_empty() {
-                    input(enigo.text(&value))?;
+                    kb.text(&value)?;
                 }
             }
         }
-        Token::Key(key) => input(enigo.key(*key, Direction::Click))?,
+        Token::Key(key) => kb.key(*key, Direction::Click)?,
         Token::Char(c) => {
             let mut buf = [0u8; 4];
-            input(enigo.text(c.encode_utf8(&mut buf)))?;
+            kb.text(c.encode_utf8(&mut buf))?;
         }
         Token::Delay(ms) => sleep(Duration::from_millis(*ms)),
         Token::Modified(mods, inner) => {
             if mods.is_empty() {
-                return type_token(enigo, inner, resolve);
+                return type_token(kb, inner, resolve);
             }
             let held = mods.keys();
-            for k in &held {
-                input(enigo.key(*k, Direction::Press))?;
+            for m in &held {
+                kb.modifier(*m, Direction::Press)?;
             }
             let result = match inner.as_ref() {
-                Token::Key(key) => input(enigo.key(*key, Direction::Click)),
-                Token::Char(c) => input(enigo.key(Key::Unicode(*c), Direction::Click)),
-                other => type_token(enigo, other, resolve),
+                Token::Key(key) => kb.key(*key, Direction::Click),
+                Token::Char(c) => kb.char_key(*c, Direction::Click),
+                other => type_token(kb, other, resolve),
             };
-            for k in held.iter().rev() {
-                input(enigo.key(*k, Direction::Release))?;
+            for m in held.iter().rev() {
+                kb.modifier(*m, Direction::Release)?;
             }
             result?;
         }
@@ -288,7 +299,7 @@ fn type_token(enigo: &mut Enigo, token: &Token, resolve: &dyn Fn(&str) -> Option
 
 /// Title of the foreground window, or `None` when the OS reports no active window.
 pub fn active_window_title() -> Option<String> {
-    active_win_pos_rs::get_active_window().ok().map(|w| w.title)
+    crate::input::active_window_title()
 }
 
 /// KeePass window association. A pattern written `//text//` is a regex in KeePass; this
@@ -372,7 +383,7 @@ mod tests {
                 Token::Field("USERNAME".into()),
                 Token::Key(Key::Tab),
                 Token::Field("PASSWORD".into()),
-                Token::Key(Key::Return),
+                Token::Key(Key::Enter),
             ]
         );
     }
