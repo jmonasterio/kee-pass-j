@@ -19,7 +19,7 @@ function row(iconName: IconName | null, title: string, desc: string, ...controls
   );
 }
 
-function section(title: string, ...rows: HTMLElement[]): HTMLElement {
+function section(title: string, ...rows: (HTMLElement | null)[]): HTMLElement {
   return el("section", { class: "settings-section" }, el("h3", { class: "settings-section-title" }, title), el("div", { class: "settings-card" }, rows));
 }
 
@@ -49,6 +49,7 @@ export async function openSettings(): Promise<void> {
   const reopenLast = toggle("Reopen the last database", current.reopenLast);
   const folderColors = toggle("Colour tiles by folder", current.tileColors === "folder");
   const notesMonospace = toggle("Monospace notes", current.notesMonospace);
+  const quickUnlock = current.quickUnlockName ? toggle(`Unlock with ${current.quickUnlockName}`, current.quickUnlock) : null;
 
   const length = Math.min(128, Math.max(4, current.generator.length));
   const lengthLabel = el("span", { class: "slider-value" }, String(length));
@@ -81,6 +82,8 @@ export async function openSettings(): Promise<void> {
         excludeAmbiguous: excludeAmbiguous.checked,
       },
       backupDir: current.backupDir,
+      quickUnlock: quickUnlock ? quickUnlock.checked : current.quickUnlock,
+      quickUnlockName: current.quickUnlockName,
     };
     busy = true;
     saveButton.disabled = true;
@@ -113,6 +116,14 @@ export async function openSettings(): Promise<void> {
     section(
       "General",
       row("refresh", "Reopen the last database", "Have it selected on the unlock screen when the app starts.", reopenLast),
+      quickUnlock
+        ? row(
+            "key",
+            `Unlock with ${current.quickUnlockName}`,
+            `After you unlock a database with its password once, ${current.quickUnlockName} unlocks it next time. Turning this off forgets the kept passwords.`,
+            quickUnlock,
+          )
+        : null,
       row("text", "Monospace notes", "Show notes in a fixed-width font, so columns line up.", notesMonospace),
       row(
         "folder",

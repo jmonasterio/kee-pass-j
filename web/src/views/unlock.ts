@@ -78,6 +78,10 @@ function openForm(v: UnlockView, keptPassword: string): HTMLElement {
   const keyfileButton = button("Key file…", () => {
     if (selected) void refresh(api.chooseKeyfile(selected));
   });
+  // "Unlock with Touch ID" / "Unlock with Windows Hello", shown when a password is stored.
+  const quickButton = v.quickUnlockLabel
+    ? button(`Unlock with ${v.quickUnlockLabel}`, () => void doQuickUnlock(), { appearance: "primary", icon: "key", class: "quick-unlock" })
+    : null;
 
   const rows = new Map<string, HTMLElement>();
   const current = (): RecentItem | undefined => v.recent.find((r) => r.path === selected);
@@ -90,6 +94,12 @@ function openForm(v: UnlockView, keptPassword: string): HTMLElement {
     const item = current();
     unlockButton.disabled = !item || item.missing;
     keyfileButton.disabled = !item;
+    if (quickButton) {
+      const usable = !!item && item.quickUnlock && !item.missing;
+      quickButton.hidden = !usable;
+      // With quick unlock on offer, the password button steps back to the secondary look.
+      unlockButton.setAttribute("appearance", usable ? "outline" : "primary");
+    }
   };
 
   const select = (path: string) => {
@@ -178,7 +188,26 @@ function openForm(v: UnlockView, keptPassword: string): HTMLElement {
       busy = false;
     }
   };
-  submit = () => void doUnlock();
+  const doQuickUnlock = async () => {
+    const item = current();
+    if (busy || !item || !item.quickUnlock || !quickButton) return;
+    busy = true;
+    quickButton.disabled = true;
+    error.textContent = "";
+    try {
+      nav.main(await api.unlockQuick(item.path));
+    } catch (err) {
+      // A changed master password removes the stored one: re-render so the button goes away,
+      // then show the message on the new page.
+      const message = errorText(err);
+      await refresh(api.unlockView());
+      showError(message);
+    } finally {
+      busy = false;
+    }
+  };
+  // Enter with an empty password field uses quick unlock when it is on offer.
+  submit = () => void (password.value === "" && current()?.quickUnlock && quickButton ? doQuickUnlock() : doUnlock());
 
   const list =
     v.recent.length > 0
@@ -192,6 +221,7 @@ function openForm(v: UnlockView, keptPassword: string): HTMLElement {
     { class: "stack" },
     el("div", { class: "section-label" }, "Recent databases"),
     list,
+    quickButton,
     field("Master password", password),
     el("div", { class: "button-row" }, keyfileButton, el("div", { class: "spacer" }), unlockButton),
     error,

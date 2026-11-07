@@ -13,6 +13,7 @@ use ourlogins::generator::{self, GenOptions};
 use ourlogins::settings;
 use ourlogins::vault::{self, CustomField, EntryEdit, EntryView, Vault};
 
+use crate::biometric;
 use crate::dto::*;
 use crate::state::{filter_shows, folders, ordered_groups, parse_entry_id, parse_filter, parse_group_id, AppState, Filter, OpenDb, Shared};
 use crate::typing;
@@ -198,11 +199,68 @@ pub async fn unlock(app: AppHandle, state: State<'_, Shared>, path: String, pass
     }
     // Key derivation takes a second or more; keep the state unlocked meanwhile.
     let vault = Vault::open(&path, &password, keyfile.as_deref()).map_err(|e| format!("Could not unlock: {e}"))?;
+    let (view, offer_quick_unlock) = {
+        let mut st = state.lock();
+        if st.dbs.iter().any(|db| db.vault.path() == path) {
+            return Err("That database is already open.".into());
+        }
+        let offer = st.quick_unlock_label().is_some() && !biometric::has(&path);
+        (add_open_db(&app, &mut st, vault, keyfile), offer)
+    };
+    // First unlock with the password on a machine with Windows Hello / Touch ID: keep the
+    // password behind it for next time. Windows shows its prompt here.
+    if offer_quick_unlock {
+        if let Err(e) = biometric::store(&path, &password, parent_window(&app)) {
+            typing::toast(&app, &format!("Quick unlock was not set up: {e}"));
+        }
+    }
+    Ok(view)
+}
+
+/// Unlocks with the password stored behind Windows Hello / Touch ID.
+#[tauri::command]
+pub async fn unlock_quick(app: AppHandle, state: State<'_, Shared>, path: String) -> R<MainView> {
+    let path = PathBuf::from(path);
+    let (keyfile, name) = {
+        let mut st = state.lock();
+        st.picker_selected = Some(path.clone());
+        if st.dbs.iter().any(|db| db.vault.path() == path) {
+            return Err("That database is already open.".into());
+        }
+        let keyfile = st.settings.recent.iter().find(|r| r.path == path).and_then(|r| r.keyfile.clone());
+        (keyfile, crate::state::file_stem(&path))
+    };
+    if !path.is_file() {
+        return Err(format!("File not found: {}", path.display()));
+    }
+    let password = biometric::retrieve(&path, &format!("unlock {name}"), parent_window(&app))?;
+    let vault = match Vault::open(&path, &password, keyfile.as_deref()) {
+        Ok(v) => v,
+        Err(vault::VaultError::WrongKey) => {
+            // The master password was changed elsewhere; the stored one is useless now.
+            biometric::forget(&path);
+            return Err("The master password has changed. Unlock with the new password once to set up quick unlock again.".into());
+        }
+        Err(e) => return Err(format!("Could not unlock: {e}")),
+    };
     let mut st = state.lock();
     if st.dbs.iter().any(|db| db.vault.path() == path) {
         return Err("That database is already open.".into());
     }
     Ok(add_open_db(&app, &mut st, vault, keyfile))
+}
+
+/// Native handle of the main window, so the Windows Hello prompt opens in front of it.
+fn parent_window(app: &AppHandle) -> Option<isize> {
+    #[cfg(windows)]
+    {
+        app.get_webview_window("main").and_then(|w| w.hwnd().ok()).map(|h| h.0 as isize)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = app;
+        None
+    }
 }
 
 #[tauri::command]
@@ -263,6 +321,7 @@ pub async fn forget_recent(app: AppHandle, state: State<'_, Shared>, path: Strin
     let mut st = state.lock();
     st.picker.retain(|p| p != &path);
     st.settings.recent.retain(|r| r.path != path);
+    biometric::forget(&path);
     if st.picker_selected.as_ref() == Some(&path) {
         st.picker_selected = st.picker.first().cloned();
     }
@@ -687,6 +746,11 @@ pub async fn settings_get(state: State<'_, Shared>) -> R<SettingsView> {
             exclude_ambiguous: s.generator.exclude_ambiguous,
         },
         backup_dir: settings::backup_policy().dir.display().to_string(),
+        quick_unlock: s.quick_unlock,
+        quick_unlock_name: st.quick_unlock.map(|k| match k {
+            biometric::Kind::WindowsHello => "Windows Hello".to_string(),
+            biometric::Kind::TouchId => "Touch ID".to_string(),
+        }),
     })
 }
 
@@ -704,6 +768,13 @@ pub async fn settings_save(app: AppHandle, state: State<'_, Shared>, settings: S
         s.reopen_last = settings.reopen_last;
         s.notes_monospace = settings.notes_monospace;
         s.tile_colors = settings.tile_colors;
+        if s.quick_unlock && !settings.quick_unlock {
+            // Turning it off removes every stored password, not just the offer.
+            for r in &s.recent {
+                biometric::forget(&r.path);
+            }
+        }
+        s.quick_unlock = settings.quick_unlock;
         let g = settings.generator;
         s.generator = GenOptions {
             length: g.length.clamp(4, 128),

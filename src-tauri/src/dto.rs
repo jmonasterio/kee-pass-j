@@ -20,6 +20,8 @@ pub struct RecentItem {
     pub name: String,
     pub missing: bool,
     pub keyfile: Option<String>,
+    /// A password is stored for this database: "Unlock with Touch ID / Windows Hello" works.
+    pub quick_unlock: bool,
 }
 
 #[derive(Serialize)]
@@ -29,6 +31,8 @@ pub struct UnlockView {
     pub selected: Option<String>,
     pub has_open_dbs: bool,
     pub pending_new: Option<String>,
+    /// "Touch ID" / "Windows Hello" when quick unlock is available and turned on.
+    pub quick_unlock_label: Option<&'static str>,
 }
 
 #[derive(Serialize)]
@@ -215,6 +219,9 @@ pub struct SettingsView {
     pub tile_colors: TileColors,
     pub generator: GeneratorSettings,
     pub backup_dir: String,
+    pub quick_unlock: bool,
+    /// "Touch ID" / "Windows Hello" when this machine has it set up (read-only); `None` hides the option.
+    pub quick_unlock_name: Option<String>,
 }
 
 /// One account in Quick Access. Never carries the password.

@@ -6,6 +6,7 @@ use std::sync::{Mutex, MutexGuard};
 use ourlogins::settings::{self, Settings};
 use ourlogins::vault::{EntryId, EntryView, GroupId, GroupView, Vault};
 
+use crate::biometric;
 use crate::dto::*;
 
 /// What the account list shows when the search box is empty.
@@ -35,6 +36,8 @@ pub struct AppState {
     pub pending_new_db: Option<PathBuf>,
     /// Tab whose last save failed, with the error text; Retry saves this one.
     pub save_error: Option<(usize, String)>,
+    /// Windows Hello / Touch ID, when this machine has it set up.
+    pub quick_unlock: Option<biometric::Kind>,
 }
 
 pub struct Shared(pub Mutex<AppState>);
@@ -53,6 +56,7 @@ impl Shared {
             picker_selected,
             pending_new_db: None,
             save_error: None,
+            quick_unlock: biometric::available(),
         }))
     }
 
@@ -101,7 +105,16 @@ impl AppState {
         self.settings.save().map_err(|e| format!("Could not save settings: {e}"))
     }
 
+    /// "Touch ID" / "Windows Hello" when quick unlock can be used (hardware set up, setting on).
+    pub fn quick_unlock_label(&self) -> Option<&'static str> {
+        match self.quick_unlock.filter(|_| self.settings.quick_unlock)? {
+            biometric::Kind::WindowsHello => Some("Windows Hello"),
+            biometric::Kind::TouchId => Some("Touch ID"),
+        }
+    }
+
     pub fn unlock_view(&self) -> UnlockView {
+        let label = self.quick_unlock_label();
         let recent = self
             .picker
             .iter()
@@ -117,6 +130,7 @@ impl AppState {
                     .and_then(|r| r.keyfile.as_deref())
                     .and_then(Path::file_name)
                     .map(|n| n.to_string_lossy().into_owned()),
+                quick_unlock: label.is_some() && biometric::has(p),
             })
             .collect();
         let selected = self
@@ -129,6 +143,7 @@ impl AppState {
             selected,
             has_open_dbs: !self.dbs.is_empty(),
             pending_new: self.pending_new_db.as_ref().map(|p| p.display().to_string()),
+            quick_unlock_label: label,
         }
     }
 

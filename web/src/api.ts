@@ -49,12 +49,16 @@ export interface RecentItem {
   name: string;
   missing: boolean;
   keyfile: string | null;
+  /** A password is kept behind Windows Hello / Touch ID for this database. */
+  quickUnlock: boolean;
 }
 export interface UnlockView {
   recent: RecentItem[];
   selected: string | null;
   hasOpenDbs: boolean;
   pendingNew: string | null;
+  /** "Touch ID" / "Windows Hello" when quick unlock is available and turned on. */
+  quickUnlockLabel: string | null;
 }
 
 export interface TabItem {
@@ -203,6 +207,9 @@ export interface SettingsView {
   tileColors: TileColors;
   generator: GeneratorSettings;
   backupDir: string;
+  quickUnlock: boolean;
+  /** "Touch ID" / "Windows Hello" when the machine has it set up; null hides the option. */
+  quickUnlockName: string | null;
 }
 /** One account in Quick Access (never the password). */
 export interface QuickItem {
@@ -235,6 +242,7 @@ export const api = {
 
   unlockView: () => invoke<UnlockView>("unlock_view"),
   unlock: (path: string, password: string) => invoke<MainView>("unlock", { path, password }),
+  unlockQuick: (path: string) => invoke<MainView>("unlock_quick", { path }),
   browseOpen: () => invoke<UnlockView>("browse_open"),
   browseNew: () => invoke<UnlockView>("browse_new"),
   createDatabase: (password: string, confirm: string) =>

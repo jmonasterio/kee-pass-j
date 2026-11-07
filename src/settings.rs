@@ -52,6 +52,8 @@ pub struct Settings {
     pub generator: GenOptions,
     pub notes_monospace: bool,
     pub tile_colors: TileColors,
+    /// Offer Windows Hello / Touch ID unlock after one unlock with the password.
+    pub quick_unlock: bool,
 }
 
 impl Default for Settings {
@@ -64,6 +66,7 @@ impl Default for Settings {
             generator: GenOptions::default(),
             notes_monospace: false,
             tile_colors: TileColors::Folder,
+            quick_unlock: true,
         }
     }
 }

@@ -24,12 +24,35 @@ serde = { version = "1", features = ["derive"] }
 chrono = "0.4"
 uuid = "1"
 global-hotkey = "0.9"
+zeroize = "1"
 
 [target.'cfg(windows)'.dependencies]
 windows-version = "0.1"
 # Same versions wry uses; needed to switch off WebView2 autofill and password autosave.
 webview2-com = "0.39"
 windows-core = "0.62"
+# Quick unlock (biometric.rs): Windows Hello key credential, AES-256-GCM for the stored password.
+windows = { version = "0.62", features = [
+    "Security_Credentials",
+    "Security_Cryptography",
+    "Storage_Streams",
+    "UI",
+    "Win32_Foundation",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_WindowsAndMessaging",
+] }
+windows-future = "0.3"
+aes-gcm = { version = "0.10", default-features = false, features = ["aes", "alloc", "zeroize"] }
+sha2 = "0.10"
+getrandom = "0.3"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Quick unlock (biometric.rs): login Keychain plus a Touch ID check through LAContext.
+security-framework = "3"
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSError", "NSString"] }
+objc2-local-authentication = { version = "0.3", features = ["LAContext", "LAError", "block2"] }
+block2 = "0.6"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

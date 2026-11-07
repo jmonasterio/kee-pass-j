@@ -16,7 +16,7 @@ Wraps `keepass::Database` (crate `keepass` 0.17, feature `save_kdbx4`).
 pub struct EntryId(pub uuid::Uuid);   // Copy, Eq, Hash, Display
 pub struct GroupId(pub uuid::Uuid);   // Copy, Eq, Hash, Display
 
-pub struct GroupView { pub id: GroupId, pub parent: Option<GroupId>, pub name: String, pub depth: usize, pub is_recycle_bin: bool }
+pub struct GroupView { pub id: GroupId, pub parent: Option<GroupId>, pub name: String, pub depth: usize, pub is_recycle_bin: bool, pub color: Option<String> /* group custom data "OurLogins.Color" */ }
 
 pub struct EntryView {
     pub id: EntryId, pub group: GroupId,
@@ -70,6 +70,8 @@ impl Vault {
     pub fn delete_group(&mut self, id: GroupId) -> Result<(), VaultError>;  // whole subtree to the Recycle Bin; permanent when already in the bin, for the bin itself, or when the bin is disabled; root refused
     pub fn entry_count(&self, group: GroupId) -> usize;                     // direct entries only
     pub fn recycle_bin_enabled(&self) -> bool;                             // false when the metadata turns the bin off (deletes are permanent)
+    pub fn recycle_bin_entries(&self) -> Vec<EntryView>;                   // everything in the bin, including inside deleted groups
+    pub fn set_group_color(&mut self, id: GroupId, color: Option<&str>) -> Result<(), VaultError>;  // None = automatic
     pub fn attachment(&self, id: EntryId, name: &str) -> Option<Vec<u8>>;
     pub fn add_attachment(&mut self, id: EntryId, name: &str, bytes: Vec<u8>) -> Result<(), VaultError>;
     pub fn remove_attachment(&mut self, id: EntryId, name: &str) -> Result<(), VaultError>;
@@ -151,19 +153,29 @@ vanilla TypeScript plus Fluent UI Web Components v3 (`web/src`), bundled by esbu
 `cargo build --release -p ourlogins-app` compiles `web/dist` into one self-contained
 `OurLogins.exe`. Run `npm run build` first.
 
-- `src-tauri/src/state.rs`: `AppState` (open databases as tabs, selection, search, recent
-  list, pending new database, Auto-Type chooser, last save error) behind one `Mutex`, plus
-  `main_view()`/`unlock_view()` that build the page data.
+- `src-tauri/src/state.rs`: `AppState` (open databases as tabs, each with a list filter
+  — All, Not working, Recycle Bin or a folder — and a selected entry; search; recent list;
+  pending new database; last save error) behind one `Mutex`, plus `main_view()` /
+  `unlock_view()` that build the page data. `main_view()` drops the selected entry when it is
+  not in the list shown, so the details always belong to a visible row.
 - `src-tauri/src/commands.rs`: every `#[tauri::command]` the page can call. Mutating commands
   go: `Vault` method → `save_active()` (records a failure in `save_error`) → return the fresh
   `MainView`. Save failures show a persistent banner with Retry; an edit is never dropped
-  silently. Commands are `async`, so Argon2 and the blocking native file dialogs run off the
-  main thread.
+  silently. Commands are `async`, so Argon2, the blocking native file dialogs and the Windows
+  Hello / Touch ID prompts run off the main thread.
 - `src-tauri/src/dto.rs`: wire types (camelCase JSON), mirrored by `web/src/api.ts`.
 - `src-tauri/src/typing.rs`: global hotkey (`global-hotkey`, manager owned by the main
-  thread) and Auto-Type. Typing runs on the main thread. `autotype_selected` hides the window,
-  waits 250 ms, types, then shows the window again; a hotkey with several matches emits
-  `autotype-choose` and the page shows a chooser.
+  thread) and Auto-Type. Typing runs on the main thread. One account matching the active
+  window is typed at once; otherwise the hotkey opens Quick Access, a second always-on-top
+  window (`quick` in `tauri.conf.json`, same bundle loaded with `?quick`, `web/src/views/quick.ts`).
+  Typing from Quick Access or the main window hides that window, waits 250 ms so the app
+  behind gets the focus back, then types.
+- `src-tauri/src/biometric.rs`: quick unlock. Windows: the password is encrypted with a key
+  derived from a Windows Hello signature (KeePassXC's scheme). macOS: login Keychain item read
+  only after a Touch ID check (the module doc explains why the Keychain itself cannot require
+  Touch ID for an ad-hoc signed app). The first password unlock of a database stores it; a
+  wrong stored password (changed elsewhere) is forgotten.
+- Folder colours live in the file as group custom data `OurLogins.Color`.
 
 Security rules for the webview:
 
@@ -178,5 +190,6 @@ Security rules for the webview:
   Show. The edit form necessarily carries the entry's values.
 - The window runs `incognito`. On Windows, WebView2 general autofill and password autosave
   are off, and release builds disable browser shortcuts (reload, print, find, devtools).
-- Capabilities (`src-tauri/capabilities/default.json`) grant the page only event listening
-  and window dragging. File, dialog and clipboard plugins are used from Rust only.
+- Capabilities (`src-tauri/capabilities/default.json`) grant both windows only event
+  listening and window dragging. File, dialog and clipboard plugins are used from Rust only.
+  Quick Access receives account titles and usernames, never passwords.

@@ -1,5 +1,6 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+mod biometric;
 mod commands;
 mod dto;
 mod state;
@@ -107,6 +108,7 @@ fn main() {
             commands::platform_info,
             commands::unlock_view,
             commands::unlock,
+            commands::unlock_quick,
             commands::browse_open,
             commands::browse_new,
             commands::create_database,

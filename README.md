@@ -9,7 +9,7 @@ Older KDBX 3.1 files open normally and are rewritten as KDBX 4 on their first sa
 (the `keepass` crate writes only KDBX 4). KeePass 2.35+ and KeePassXC 2.3+ open KDBX 4;
 older KeePass versions do not.
 
-## v1 scope
+## Features
 
 - Open, edit, and save `.kdbx` (KDBX 4) databases. Several databases open at once, tabbed.
 - On launch, reopen the last database(s). If the file is missing (USB unplugged) or the
@@ -19,8 +19,11 @@ older KeePass versions do not.
   USB): the newest 20 saves plus one per day for 30 days. The first save of each session
   first copies the file as it was on disk, so edits made by other apps are kept too. A
   KDBX 3.1 file also keeps a permanent `<name>-kdbx3-original.kdbx` copy.
-- Group tree, entry list, always-visible search box, view/edit/add/delete entries.
-  Notes render readably with optional monospace and per-line copy.
+- Sidebar filters: All accounts (the default), Not working, folders, Recycle Bin. Folders
+  can be added, coloured and deleted (with their contents, to the Recycle Bin); letter tiles
+  take their folder's colour (Settings can turn that off). Always-visible search box,
+  view/edit/add/delete entries. Notes render readably with optional monospace and
+  per-line copy.
 - "Add account" capture screen: site, URL, username/email, password (generator
   prefilled), recovery PIN/phone, security questions, notes. Target: under ten seconds
   to record a new account. If the site already exists it offers to replace the old entry
@@ -34,11 +37,17 @@ older KeePass versions do not.
   select-entry-then-type. Default sequence `{USERNAME}{TAB}{PASSWORD}{ENTER}`, per-entry
   override, KeePass placeholder grammar. Windows `SendInput`, macOS `CGEvent` via `enigo`
   (macOS asks for the Accessibility permission once).
+- Quick Access: when the hotkey finds several matching accounts or none, a small window
+  opens over the current app to pick or search one; Enter types it, Ctrl+Enter copies the
+  password.
+- Quick unlock: after one unlock with the password, Windows Hello (PIN, fingerprint or face)
+  or Touch ID unlocks the database. The password is kept encrypted with a Windows Hello key,
+  or in the login Keychain on macOS (see `src-tauri/src/biometric.rs` for the trade-off).
 
-## Not in v1
+## Not included
 
 Browser extension, phone, a database shared between two people, second key for
-recovery, web sharing, agent sharing, TOTP, Windows Hello / Touch ID, SQLite.
+recovery, web sharing, agent sharing, TOTP, SQLite.
 
 ## Layout
 
