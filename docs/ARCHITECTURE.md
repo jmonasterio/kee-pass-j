@@ -23,6 +23,7 @@ pub struct EntryView {
     pub title: String, pub username: String, pub password: String, pub url: String, pub notes: String,
     pub tags: Vec<String>,
     pub stale: bool,                               // custom field KPJ_Stale == "1"
+    pub document: bool,                            // string field "OurLogins.Kind" == "document"
     pub recovery_pin: String,                      // custom field "Recovery PIN" (protected)
     pub recovery_phone: String,                    // custom field "Recovery Phone"
     pub security_questions: String,                // custom field "Security Questions" (protected, multiline)
@@ -72,7 +73,10 @@ impl Vault {
     pub fn recycle_bin_enabled(&self) -> bool;                             // false when the metadata turns the bin off (deletes are permanent)
     pub fn recycle_bin_entries(&self) -> Vec<EntryView>;                   // everything in the bin, including inside deleted groups
     pub fn set_group_color(&mut self, id: GroupId, color: Option<&str>) -> Result<(), VaultError>;  // None = automatic
+    pub fn set_document(&mut self, id: EntryId, document: bool) -> Result<(), VaultError>;  // false removes the field
     pub fn attachment(&self, id: EntryId, name: &str) -> Option<Vec<u8>>;
+    pub fn attachment_size(&self, id: EntryId, name: &str) -> Option<u64>;
+    pub fn attachments_total_bytes(&self) -> u64;  // every entry, Recycle Bin included; identical files counted once per entry (no dedup on save)
     pub fn add_attachment(&mut self, id: EntryId, name: &str, bytes: Vec<u8>) -> Result<(), VaultError>;
     pub fn remove_attachment(&mut self, id: EntryId, name: &str) -> Result<(), VaultError>;
 }
@@ -176,6 +180,15 @@ vanilla TypeScript plus Fluent UI Web Components v3 (`web/src`), bundled by esbu
   Touch ID for an ad-hoc signed app). The first password unlock of a database stores it; a
   wrong stored password (changed elsewhere) is forgotten.
 - Folder colours live in the file as group custom data `OurLogins.Color`.
+- Documents are entries with the string field `OurLogins.Kind = document` (entry custom
+  data does not survive a save with the `keepass` crate 0.17). Their notes render as
+  Markdown through `web/src/markdown.ts`: markdown-it tokens (raw HTML off) become DOM
+  nodes; links open only for http, https and mailto; images show as their alt text.
+- Adding a file takes two commands: `pick_attachment` shows the native dialog and returns
+  name, size and current totals (the path stays in Rust as `pending_attachment`), then
+  `attach_picked` or `cancel_attachment`. `open_attachment` writes a copy to
+  `<data dir>/open/<random>/<name>` and opens it with the default app; the `open` folder
+  is deleted when the last database locks, at exit and at startup.
 
 Security rules for the webview:
 

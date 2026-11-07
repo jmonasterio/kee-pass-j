@@ -10,7 +10,7 @@ const DIALOG_COMMANDS: Record<string, true> = {
   browse_open: true,
   browse_new: true,
   choose_keyfile: true,
-  add_attachment: true,
+  pick_attachment: true,
   save_attachment: true,
 };
 let pending = 0;
@@ -82,10 +82,16 @@ export const FOLDER_COLORS = ["red", "orange", "yellow", "lime", "green", "teal"
 export type FolderColor = (typeof FOLDER_COLORS)[number];
 export type TileColors = "folder" | "off";
 
-export type Filter = { kind: "all" } | { kind: "notWorking" } | { kind: "recycleBin" } | { kind: "group"; id: Id };
+export type Filter =
+  | { kind: "all" }
+  | { kind: "notWorking" }
+  | { kind: "documents" }
+  | { kind: "recycleBin" }
+  | { kind: "group"; id: Id };
 export interface Counts {
   all: number;
   notWorking: number;
+  documents: number;
   recycleBin: number;
 }
 export interface EntrySummary {
@@ -96,6 +102,9 @@ export interface EntrySummary {
   stale: boolean;
   /** Folder id; null in the root or the Recycle Bin. */
   folder: Id | null;
+  /** A document entry (text and files) rather than a login. */
+  document: boolean;
+  attachmentCount: number;
 }
 export interface CustomFieldView {
   key: string;
@@ -120,7 +129,8 @@ export interface EntryDetail {
   recoveryPhone: string;
   hasSecurityQuestions: boolean;
   custom: CustomFieldView[];
-  attachments: string[];
+  attachments: AttachmentInfo[];
+  document: boolean;
 }
 export interface MainView {
   tabs: TabItem[];
@@ -137,6 +147,7 @@ export interface MainView {
   /** False when the database has its recycle bin turned off: every delete is permanent. */
   recycleBinEnabled: boolean;
   tileColors: TileColors;
+  storage: Storage;
 }
 
 export type FieldName =
@@ -179,10 +190,32 @@ export interface EntryForm {
   autotypeSequence: string;
   autotypeWindows: string;
   custom: CustomField[];
+  document: boolean;
 }
-export type FormMode = "add" | "edit";
+/** "addDocument" opens the form for a new document entry. */
+export type FormMode = "add" | "addDocument" | "edit";
+export interface AttachmentInfo {
+  name: string;
+  size: number;
+}
+/** Space the open database takes (bytes). */
+export interface Storage {
+  attachmentsBytes: number;
+  fileBytes: number;
+}
+/** A file picked for attaching, before it is added (bytes). */
+export interface AttachmentPick {
+  name: string;
+  size: number;
+  attachmentsBytes: number;
+  fileBytes: number;
+}
+export interface AboutInfo {
+  version: string;
+  repository: string;
+}
 export interface FormData {
-  mode: FormMode;
+  mode: "add" | "edit";
   groups: FormGroup[];
   gen: GenOptions;
   entry: EntryForm;
@@ -264,7 +297,12 @@ export const api = {
   deleteEntry: () => invoke<MainView>("delete_entry"),
   deleteGroup: (id: Id) => invoke<MainView>("delete_group", { id }),
   emptyRecycleBin: () => invoke<MainView>("empty_recycle_bin"),
-  addAttachment: () => invoke<MainView>("add_attachment"),
+  pickAttachment: () => invoke<AttachmentPick | null>("pick_attachment"),
+  attachPicked: () => invoke<MainView>("attach_picked"),
+  cancelAttachment: () => invoke<void>("cancel_attachment"),
+  openAttachment: (name: string) => invoke<void>("open_attachment", { name }),
+  setDocument: (document: boolean) => invoke<MainView>("set_document", { document }),
+  aboutInfo: () => invoke<AboutInfo>("about_info"),
   saveAttachment: (name: string) => invoke<string | null>("save_attachment", { name }),
   removeAttachment: (name: string) => invoke<MainView>("remove_attachment", { name }),
   revealField: (field: FieldName) => invoke<string>("reveal_field", { field }),

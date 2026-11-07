@@ -131,6 +131,11 @@ const ICONS: Record<string, Shape[]> = {
   ],
   text: [["path", "M4.5 5.5h11M4.5 10h11M4.5 14.5h7"]],
   warning: [["path", "M10 3.25 17.25 16H2.75z"], ["path", "M10 8v3.5M10 13.75h.01"]],
+  document: [
+    ["path", "M5.75 2.75h5.5l3.5 3.5v10a1 1 0 0 1-1 1h-8a1 1 0 0 1-1-1v-12.5a1 1 0 0 1 1-1z"],
+    ["path", "M11 2.75v3.75h3.75M7.75 10.5h4.5M7.75 13.5h4.5"],
+  ],
+  info: [["circle", 10, 10, 7.25], ["path", "M10 9v4.5M10 6.5h.01"]],
 };
 
 export type IconName = keyof typeof ICONS;

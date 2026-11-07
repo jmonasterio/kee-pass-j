@@ -26,12 +26,7 @@ export function renderUnlock(root: HTMLElement, next: UnlockView): void {
   passwordInput = null;
   submit = null;
 
-  const header = el(
-    "div",
-    { class: "unlock-header" },
-    next.hasOpenDbs ? button(null, () => void back(), { icon: "back", appearance: "subtle", title: "Back" }) : null,
-    el("h1", { class: "app-title" }, "Our Logins"),
-  );
+  const header = el("div", { class: "unlock-header" }, el("h1", { class: "app-title" }, "Our Logins"));
   const body = next.pendingNew ? createForm(next.pendingNew) : openForm(next, selected === previous ? keptPassword : "");
 
   setChildren(
@@ -223,7 +218,14 @@ function openForm(v: UnlockView, keptPassword: string): HTMLElement {
     list,
     quickButton,
     field("Master password", password),
-    el("div", { class: "button-row" }, keyfileButton, el("div", { class: "spacer" }), unlockButton),
+    el(
+      "div",
+      { class: "button-row" },
+      keyfileButton,
+      el("div", { class: "spacer" }),
+      v.hasOpenDbs ? button("Cancel", () => void back(), { title: "Back to your open databases (Esc)" }) : null,
+      unlockButton,
+    ),
     error,
     el("fluent-divider", null),
     el(

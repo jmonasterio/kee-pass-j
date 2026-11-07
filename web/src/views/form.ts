@@ -53,8 +53,11 @@ export async function openForm(mode: FormMode, notesMonospace: boolean): Promise
   }
   const entry = data.entry;
   const editing = data.mode === "edit";
+  // Document entries: a name, free text (plain or Markdown) and files; no login fields.
+  const isDoc = entry.document;
+  const noun = isDoc ? "document" : "account";
 
-  const title = textInput(entry.title, { autofocus: true, placeholder: "e.g. Netflix" });
+  const title = textInput(entry.title, { autofocus: true, placeholder: isDoc ? "e.g. Passport" : "e.g. Netflix" });
   const url = textInput(entry.url, { placeholder: "netflix.com" });
   const username = textInput(entry.username);
   const password = textInput(entry.password, { class: "password-input", secret: true });
@@ -63,7 +66,10 @@ export async function openForm(mode: FormMode, notesMonospace: boolean): Promise
   const recoveryPin = textInput(entry.recoveryPin, { secret: true });
   const recoveryPhone = textInput(entry.recoveryPhone);
   const securityQuestions = textArea(entry.securityQuestions, { secret: true });
-  const notes = textArea(entry.notes, { class: notesMonospace ? "mono" : undefined });
+  const notes = textArea(entry.notes, {
+    class: [notesMonospace ? "mono" : "", isDoc ? "doc-text" : ""].join(" ").trim() || undefined,
+    placeholder: isDoc ? "Plain text or Markdown: # headings, **bold**, - lists, [links](https://…)" : "",
+  });
   const error = el("div", { class: "form-error", attrs: { role: "alert" } });
 
   // Generator.
@@ -193,14 +199,14 @@ export async function openForm(mode: FormMode, notesMonospace: boolean): Promise
   const windows = textArea(entry.autotypeWindows, { class: "mono", placeholder: "One window title pattern per line" });
   windows.setAttribute("spellcheck", "false");
 
-  const saveButton = button(editing ? "Save changes" : "Save account", () => void save(null), { appearance: "primary" });
+  const saveButton = button(editing ? "Save changes" : `Save ${noun}`, () => void save(null), { appearance: "primary" });
   let busy = false;
   let closed = false;
   const save = async (replace: Id | null) => {
     if (busy || closed) return;
     const name = title.value.trim();
     if (!name) {
-      error.textContent = "Give the account a name first.";
+      error.textContent = `Give the ${noun} a name first.`;
       title.focus();
       return;
     }
@@ -223,6 +229,7 @@ export async function openForm(mode: FormMode, notesMonospace: boolean): Promise
             .map((r) => ({ key: r.key.value.trim(), value: r.value.value, protected: r.prot.checked }))
             .filter((c) => c.key !== "" || c.value !== "")
         : entry.custom,
+      document: entry.document,
     };
     busy = true;
     saveButton.disabled = true;
@@ -245,9 +252,8 @@ export async function openForm(mode: FormMode, notesMonospace: boolean): Promise
   const cancelButton = button("Cancel", () => drawer.hide());
   const footer = el("div", { class: "drawer-footer", attrs: { slot: "footer" } }, cancelButton, saveButton);
 
-  const content = el(
-    "div",
-    { class: "form-content" },
+  // Built lazily: the shared inputs (title, notes, group, tags) can sit in only one field.
+  const accountFields = () => [
     field("Site or service", title),
     field("Website", url),
     dupBar,
@@ -283,7 +289,7 @@ export async function openForm(mode: FormMode, notesMonospace: boolean): Promise
     el("div", { class: "two-col" }, field("Recovery PIN", recoveryPin), field("Recovery phone", recoveryPhone)),
     field("Security questions", securityQuestions),
     field("Notes", notes),
-    field("Group", group),
+    field("Folder", group),
     editing
       ? [
           field("Tags", tags),
@@ -307,16 +313,23 @@ export async function openForm(mode: FormMode, notesMonospace: boolean): Promise
           ),
         ]
       : null,
-    error,
-  );
+  ];
+  const documentFields = () => [
+    field("Name", title),
+    field("Text", notes),
+    el("div", { class: "muted small" }, editing ? "" : "Files are added after saving, from the document's page."),
+    field("Folder", group),
+    editing ? field("Tags", tags) : null,
+  ];
+  const content = el("div", { class: "form-content" }, isDoc ? documentFields() : accountFields(), error);
 
   const drawer = el(
     "fluent-drawer",
-    { class: "form-drawer", attrs: { position: "end", "aria-label": editing ? "Edit account" : "Add account" } },
+    { class: "form-drawer", attrs: { position: "end", "aria-label": `${editing ? "Edit" : "Add"} ${noun}` } },
     el(
       "fluent-drawer-body",
       null,
-      el("h2", { class: "dialog-title", attrs: { slot: "title" } }, editing ? "Edit account" : "Add account"),
+      el("h2", { class: "dialog-title", attrs: { slot: "title" } }, `${editing ? "Edit" : "Add"} ${noun}`),
       closeButton,
       content,
       footer,

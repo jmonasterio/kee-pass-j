@@ -90,6 +90,7 @@ fn main() {
             custom: vec![],
             autotype_sequence: None,
             autotype_windows: vec![],
+            document: false,
         })
         .expect("upsert");
 

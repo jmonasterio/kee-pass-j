@@ -26,9 +26,13 @@ const DEFAULT_HISTORY_MAX_ITEMS: usize = 10;
 const BACKUP_EXT: &str = "kdbx";
 /// Group custom-data key for the folder colour shown in Our Logins; stored in the file.
 const GROUP_COLOR_KEY: &str = "OurLogins.Color";
+/// String field that marks Our Logins "document" entries (value `KIND_DOCUMENT`). A string
+/// field like `KPJ_Stale`: entry custom data does not survive a save in keepass 0.17.
+pub const FIELD_KIND: &str = "OurLogins.Kind";
+const KIND_DOCUMENT: &str = "document";
 
 /// Fields with a dedicated slot in `EntryView`; everything else is a custom field.
-const RESERVED_FIELDS: [&str; 9] = [
+const RESERVED_FIELDS: [&str; 10] = [
     fields::TITLE,
     fields::USERNAME,
     fields::PASSWORD,
@@ -38,6 +42,7 @@ const RESERVED_FIELDS: [&str; 9] = [
     FIELD_RECOVERY_PIN,
     FIELD_RECOVERY_PHONE,
     FIELD_SECURITY_QUESTIONS,
+    FIELD_KIND,
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -173,6 +178,9 @@ pub struct EntryView {
     pub autotype_sequence: Option<String>,
     /// Window-title patterns.
     pub autotype_windows: Vec<String>,
+    /// A "document" entry (entry custom data `OurLogins.Kind = document`): text and files,
+    /// no login. Other KeePass apps show it as a normal entry.
+    pub document: bool,
     pub modified: DateTime<Utc>,
 }
 
@@ -194,6 +202,7 @@ pub struct EntryEdit {
     pub custom: Vec<CustomField>,
     pub autotype_sequence: Option<String>,
     pub autotype_windows: Vec<String>,
+    pub document: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -311,6 +320,7 @@ fn entry_view(e: &db::EntryRef<'_>) -> EntryView {
         attachments,
         autotype_sequence,
         autotype_windows,
+        document: e.get(FIELD_KIND) == Some(KIND_DOCUMENT),
         modified: to_utc(e.times.last_modification),
     }
 }
@@ -720,6 +730,7 @@ impl Vault {
             set_or_remove(&mut e, FIELD_RECOVERY_PIN, &edit.recovery_pin, true);
             set_or_remove(&mut e, FIELD_RECOVERY_PHONE, &edit.recovery_phone, false);
             set_or_remove(&mut e, FIELD_SECURITY_QUESTIONS, &edit.security_questions, true);
+            set_or_remove(&mut e, FIELD_KIND, if edit.document { KIND_DOCUMENT } else { "" }, false);
 
             let keep: Vec<&str> = edit.custom.iter().map(|c| c.key.as_str()).collect();
             e.fields
@@ -820,6 +831,28 @@ impl Vault {
         trim_history(&mut self.db, id.into(), max);
         self.dirty = true;
         Ok(())
+    }
+
+    /// Turns an entry into a document entry (text and files) or back into an account.
+    pub fn set_document(&mut self, id: EntryId, document: bool) -> Result<(), VaultError> {
+        let mut entry = self.db.entry_mut(id.into()).ok_or(VaultError::EntryNotFound(id))?;
+        set_or_remove(&mut entry, FIELD_KIND, if document { KIND_DOCUMENT } else { "" }, false);
+        entry.times.last_modification = Some(Times::now());
+        self.dirty = true;
+        Ok(())
+    }
+
+    /// Size in bytes of one attachment of an entry.
+    pub fn attachment_size(&self, id: EntryId, name: &str) -> Option<u64> {
+        let entry = self.db.entry(id.into())?;
+        let att = entry.attachment_by_name(name)?;
+        Some(att.data.get().len() as u64)
+    }
+
+    /// Bytes of all attachments stored in the file. Two entries holding identical files count
+    /// twice: the `keepass` crate stores each attachment separately.
+    pub fn attachments_total_bytes(&self) -> u64 {
+        self.db.iter_all_attachments().map(|a| a.data.get().len() as u64).sum()
     }
 
     pub fn add_group(&mut self, parent: GroupId, name: &str) -> Result<GroupId, VaultError> {
@@ -1141,6 +1174,7 @@ mod tests {
             custom: Vec::new(),
             autotype_sequence: None,
             autotype_windows: Vec::new(),
+            document: false,
         }
     }
 
@@ -1474,6 +1508,35 @@ mod tests {
         v.delete_group(temp).unwrap();
         assert!(v.entry(e).is_none());
         assert!(v.groups().iter().all(|g| g.id != temp));
+    }
+
+    #[test]
+    fn document_flag_and_attachment_sizes_survive_save() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("doc.kdbx");
+        let mut v = Vault::create(&path, PW).unwrap();
+        let root = v.root();
+        let mut e = edit(root, "Passport");
+        e.document = true;
+        e.notes = "# Passport\nNumber **X123**\nExpires 2031".into();
+        let doc = v.upsert_entry(e).unwrap();
+        let acct = v.upsert_entry(edit(root, "Bank")).unwrap();
+        v.add_attachment(doc, "scan.pdf", vec![7; 3000]).unwrap();
+        v.add_attachment(acct, "copy.pdf", vec![7; 3000]).unwrap();
+        v.add_attachment(acct, "other.txt", vec![1; 500]).unwrap();
+        v.save(&policy(tmp.path())).unwrap();
+
+        let mut v = Vault::open(&path, PW, None).unwrap();
+        assert!(v.entry(doc).unwrap().document);
+        assert!(!v.entry(acct).unwrap().document);
+        assert_eq!(v.entry(doc).unwrap().notes, "# Passport\nNumber **X123**\nExpires 2031");
+        assert_eq!(v.attachment_size(doc, "scan.pdf"), Some(3000));
+        assert_eq!(v.attachments_total_bytes(), 6500);
+
+        v.set_document(doc, false).unwrap();
+        v.set_document(acct, true).unwrap();
+        assert!(!v.entry(doc).unwrap().document);
+        assert!(v.entry(acct).unwrap().document);
     }
 
     #[test]

@@ -453,16 +453,20 @@ html[data-os="macos"] .sidebar-top {
   display: none;
 }
 
+/* An open menu must keep its row action displayed: moving the mouse from the row to the menu
+   ends the row hover, and a hidden trigger would take its popover down with it. */
 .nav-row:hover .row-action,
 .tab-row.selected .row-action,
 .row-action:focus-within,
 .row-action:focus-visible,
-fluent-menu.row-action[open] {
+.row-action:has([aria-expanded="true"]),
+.row-action:has(:popover-open) {
   display: inline-flex;
 }
 
 .nav-row:hover .nav-count,
-.nav-row:has(fluent-menu.row-action[open]) .nav-count {
+.nav-row:has(.row-action [aria-expanded="true"]) .nav-count,
+.nav-row:has(:popover-open) .nav-count {
   display: none;
 }
 
@@ -882,6 +886,139 @@ html[data-os="macos"] .detail-scroll {
   text-decoration: underline;
 }
 
+/* Document text rendered from Markdown. */
+.markdown {
+  overflow-wrap: anywhere;
+  line-height: var(--lineHeightBase400);
+}
+
+.markdown.mono {
+  font-family: var(--fontFamilyMonospace);
+}
+
+.markdown > :first-child {
+  margin-top: 0;
+}
+
+.markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown p,
+.markdown ul,
+.markdown ol,
+.markdown pre,
+.markdown blockquote,
+.markdown table {
+  margin: 0 0 10px;
+}
+
+.markdown h1,
+.markdown h2,
+.markdown h3,
+.markdown h4 {
+  margin: 16px 0 8px;
+  line-height: 1.25;
+  font-weight: var(--fontWeightSemibold);
+}
+
+.markdown h1 {
+  font-size: var(--fontSizeBase600);
+}
+
+.markdown h2 {
+  font-size: var(--fontSizeBase500);
+}
+
+.markdown h3,
+.markdown h4 {
+  font-size: var(--fontSizeBase400);
+}
+
+.markdown ul,
+.markdown ol {
+  padding-left: 24px;
+}
+
+.markdown code {
+  font-family: var(--fontFamilyMonospace);
+  background: var(--colorNeutralBackground3);
+  border-radius: var(--borderRadiusSmall);
+  padding: 1px 4px;
+}
+
+.markdown pre {
+  background: var(--colorNeutralBackground3);
+  border-radius: var(--borderRadiusMedium);
+  padding: 10px 12px;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.markdown pre code {
+  background: none;
+  padding: 0;
+}
+
+.markdown blockquote {
+  padding-left: 12px;
+  border-left: 3px solid var(--colorNeutralStroke1);
+  color: var(--colorNeutralForeground2);
+}
+
+.markdown table {
+  border-collapse: collapse;
+}
+
+.markdown th,
+.markdown td {
+  border: 1px solid var(--colorNeutralStroke2);
+  padding: 4px 8px;
+  text-align: left;
+}
+
+.markdown hr {
+  border: none;
+  border-top: 1px solid var(--colorNeutralStroke2);
+  margin: 12px 0;
+}
+
+/* The document text editor gets room for a long note. */
+fluent-textarea.doc-text::part(control) {
+  min-height: 320px;
+}
+
+.attachment-size {
+  flex-shrink: 0;
+  font-size: var(--fontSizeBase200);
+  color: var(--colorNeutralForeground2);
+  font-variant-numeric: tabular-nums;
+  padding: 0 8px;
+}
+
+.storage-line {
+  padding-top: 6px;
+  border-top: 1px solid var(--colorNeutralStroke3);
+  margin-top: 4px;
+}
+
+.storage-warn {
+  color: var(--colorPaletteDarkOrangeForeground1);
+}
+
+.avatar .icon {
+  width: 60%;
+  height: 60%;
+}
+
+.about-goals {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 .notes-box {
   background: var(--colorNeutralBackground3);
   border-radius: var(--borderRadiusMedium);
@@ -1099,6 +1236,14 @@ html[data-os="macos"] .detail-scroll {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+/* Every password field (unlock, new database, protected custom fields) and every revealed
+   secret uses the monospace password font, so l/1/I and O/0 can be told apart. */
+fluent-text-input[type="password"]::part(control),
+.secret {
+  font-family: var(--fontFamilyMonospace);
+  letter-spacing: 0.02em;
 }
 
 .password-input::part(control) {

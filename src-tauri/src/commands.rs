@@ -382,6 +382,11 @@ pub async fn lock_tab(state: State<'_, Shared>, index: usize) -> R<MainView> {
         st.active_tab = st.active_tab.saturating_sub(1);
     }
     st.search.clear();
+    st.pending_attachment = None;
+    if st.dbs.is_empty() {
+        // No database open: remove temporary copies of opened attachments.
+        clear_open_dir();
+    }
     Ok(st.main_view())
 }
 
@@ -489,19 +494,97 @@ pub async fn empty_recycle_bin(state: State<'_, Shared>) -> R<MainView> {
     })
 }
 
+/// Step 1 of "Add file…": the native picker. Nothing is added yet; the page shows the sizes
+/// (and a warning for big files) and then calls `attach_picked` or `cancel_attachment`.
 #[tauri::command]
-pub async fn add_attachment(app: AppHandle, state: State<'_, Shared>) -> R<MainView> {
-    let id = selected_entry(&state.lock())?.id;
-    let Some(path) = into_path(file_dialog(&app).blocking_pick_file()) else {
-        return Ok(state.lock().main_view());
+pub async fn pick_attachment(app: AppHandle, state: State<'_, Shared>) -> R<Option<AttachmentPick>> {
+    let (tab, id) = {
+        let st = state.lock();
+        (st.active_tab, selected_entry(&st)?.id)
     };
+    let Some(path) = into_path(file_dialog(&app).blocking_pick_file()) else { return Ok(None) };
+    let size = std::fs::metadata(&path).map_err(|e| format!("Could not read the file: {e}"))?.len();
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "attachment".into());
+    let mut st = state.lock();
+    let db = st.dbs.get(tab).ok_or("No database is open.")?;
+    let pick = AttachmentPick {
+        name,
+        size,
+        attachments_bytes: db.vault.attachments_total_bytes(),
+        file_bytes: std::fs::metadata(db.vault.path()).map(|m| m.len()).unwrap_or(0),
+    };
+    st.pending_attachment = Some((tab, id, path));
+    Ok(Some(pick))
+}
+
+/// Step 2: adds the picked file to the entry it was picked for, and saves.
+#[tauri::command]
+pub async fn attach_picked(state: State<'_, Shared>) -> R<MainView> {
+    let (tab, id, path) = state.lock().pending_attachment.take().ok_or("No file is waiting to be attached.")?;
     let bytes = std::fs::read(&path).map_err(|e| format!("Could not read the file: {e}"))?;
     let name = path
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "attachment".into());
     let mut st = state.lock();
-    mutate(&mut st, "Could not attach", |db| db.vault.add_attachment(id, &name, bytes))
+    let db = st.dbs.get_mut(tab).ok_or("That database is no longer open.")?;
+    db.vault.add_attachment(id, &name, bytes).map_err(|e| format!("Could not attach: {e}"))?;
+    st.save_tab(tab);
+    Ok(st.main_view())
+}
+
+#[tauri::command]
+pub async fn cancel_attachment(state: State<'_, Shared>) -> R<()> {
+    state.lock().pending_attachment = None;
+    Ok(())
+}
+
+/// Folder for temporary copies of attachments opened in other apps. Deleted when the last
+/// database is locked, when the app quits, and at the next start (in case it crashed).
+pub fn open_dir() -> PathBuf {
+    settings::data_dir().join("open")
+}
+
+pub fn clear_open_dir() {
+    let _ = std::fs::remove_dir_all(open_dir());
+}
+
+/// Opens an attachment in its usual app (PDF reader, image viewer…) from a temporary copy.
+#[tauri::command]
+pub async fn open_attachment(state: State<'_, Shared>, name: String) -> R<()> {
+    let bytes = {
+        let st = state.lock();
+        let e = selected_entry(&st)?;
+        st.active()
+            .and_then(|db| db.vault.attachment(e.id, &name))
+            .ok_or("Attachment data is missing.")?
+    };
+    // Only the last path component: an attachment named "..\x" must not escape the folder.
+    let file_name = Path::new(&name).file_name().ok_or("The attachment has no usable file name.")?;
+    let dir = open_dir().join(uuid::Uuid::new_v4().simple().to_string());
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Could not create a temporary folder: {e}"))?;
+    let target = dir.join(file_name);
+    std::fs::write(&target, bytes).map_err(|e| format!("Could not write a temporary copy: {e}"))?;
+    open_external(&target.display().to_string()).map_err(|e| format!("Could not open the file: {e}"))
+}
+
+/// Turns the selected entry into a document (text and files) or back into an account.
+#[tauri::command]
+pub async fn set_document(state: State<'_, Shared>, document: bool) -> R<MainView> {
+    let mut st = state.lock();
+    let e = selected_entry(&st)?;
+    mutate(&mut st, "Could not change the entry", |db| db.vault.set_document(e.id, document))
+}
+
+#[tauri::command]
+pub async fn about_info() -> R<AboutInfo> {
+    Ok(AboutInfo {
+        version: env!("CARGO_PKG_VERSION"),
+        repository: "https://github.com/jmonasterio/kee-pass-j",
+    })
 }
 
 #[tauri::command]
@@ -582,7 +665,8 @@ pub async fn form_open(state: State<'_, Shared>, mode: String) -> R<FormData> {
         })
         .collect();
     let entry = match mode.as_str() {
-        "add" => {
+        "add" | "addDocument" => {
+            let document = mode == "addDocument";
             let group = match db.filter {
                 Filter::Group(g) => g,
                 _ => db.vault.root(),
@@ -593,7 +677,7 @@ pub async fn form_open(state: State<'_, Shared>, mode: String) -> R<FormData> {
                 title: String::new(),
                 url: String::new(),
                 username: String::new(),
-                password: generator::generate(&st.settings.generator),
+                password: if document { String::new() } else { generator::generate(&st.settings.generator) },
                 recovery_pin: String::new(),
                 recovery_phone: String::new(),
                 security_questions: String::new(),
@@ -602,6 +686,7 @@ pub async fn form_open(state: State<'_, Shared>, mode: String) -> R<FormData> {
                 autotype_sequence: String::new(),
                 autotype_windows: String::new(),
                 custom: Vec::new(),
+                document,
             }
         }
         "edit" => {
@@ -625,6 +710,7 @@ pub async fn form_open(state: State<'_, Shared>, mode: String) -> R<FormData> {
                     .into_iter()
                     .map(|c| CustomFieldDto { key: c.key, value: c.value, protected: c.protected })
                     .collect(),
+                document: e.document,
             }
         }
         other => return Err(format!("Unknown form mode {other}.")),
@@ -700,6 +786,7 @@ pub async fn form_save(state: State<'_, Shared>, entry: EntryForm, replace: Opti
             .map(|l| l.trim().to_string())
             .filter(|l| !l.is_empty())
             .collect(),
+        document: entry.document,
     };
     let new_id = db
         .vault

@@ -100,6 +100,8 @@ fn main() {
                     let _ = q.hide();
                 }
             });
+            // Temporary copies of opened attachments left by a crash.
+            commands::clear_open_dir();
             let notice = typing::init(app.handle());
             app.manage(commands::Platform { backdrop, notice });
             Ok(())
@@ -128,7 +130,12 @@ fn main() {
             commands::toggle_stale,
             commands::delete_entry,
             commands::delete_group,
-            commands::add_attachment,
+            commands::pick_attachment,
+            commands::attach_picked,
+            commands::cancel_attachment,
+            commands::open_attachment,
+            commands::set_document,
+            commands::about_info,
             commands::save_attachment,
             commands::remove_attachment,
             commands::reveal_field,
@@ -150,6 +157,11 @@ fn main() {
             commands::quick_hide,
             commands::quick_open_main,
         ])
-        .run(tauri::generate_context!())
-        .expect("Our Logins failed to start");
+        .build(tauri::generate_context!())
+        .expect("Our Logins failed to start")
+        .run(|_app, event| {
+            if let tauri::RunEvent::Exit = event {
+                commands::clear_open_dir();
+            }
+        });
 }

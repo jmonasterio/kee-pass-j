@@ -13,6 +13,7 @@ import {
 } from "../api";
 import { confirmDialog, isOverlayOpen, openDialog, promptDialog } from "../dialogs";
 import { button, el, icon, setChildren, type Child } from "../dom";
+import { renderMarkdown } from "../markdown";
 import { nav } from "../nav";
 import { toast } from "../toast";
 import { openForm } from "./form";
@@ -97,6 +98,7 @@ function build(root: HTMLElement): void {
         "div",
         { class: "sidebar-bottom" },
         button("Settings", () => void openSettings(), { icon: "settings", appearance: "subtle", class: "nav-button" }),
+        button("About", () => void openAbout(), { icon: "info", appearance: "subtle", class: "nav-button" }),
       ),
     ),
     el(
@@ -113,7 +115,7 @@ function build(root: HTMLElement): void {
             "div",
             { class: "list-toolbar", attrs: { "data-tauri-drag-region": true } },
             searchInput,
-            button("Add", () => void openForm("add", view?.notesMonospace ?? false), { appearance: "primary", icon: "add", title: "Add account (Ctrl+N)" }),
+            addMenu(),
           ),
           entryList,
         ),
@@ -237,6 +239,13 @@ function renderSidebar(v: MainView): void {
             lead: icon("warning"),
           })
         : null,
+      navRow({
+        label: "Documents",
+        count: v.counts.documents,
+        selected: v.filter.kind === "documents",
+        onSelect: show({ kind: "documents" }),
+        lead: icon("document"),
+      }),
     ),
     el(
       "div",
@@ -448,8 +457,9 @@ async function emptyRecycleBin(v: MainView): Promise<void> {
   }
 }
 
-/** Letter tile. Coloured by the account's folder unless tile colours are off; accounts outside any folder stay neutral. */
-function avatar(v: MainView, title: string, folder: Id | null, size: "small" | "large"): HTMLElement {
+/** Tile for a row or the details: the first letter of an account, or a page for a document.
+ *  Coloured by the entry's folder unless tile colours are off; entries outside any folder stay neutral. */
+function avatar(v: MainView, title: string, folder: Id | null, size: "small" | "large", document = false): HTMLElement {
   const letter = (title.match(/[\p{L}\p{N}]/u)?.[0] ?? "?").toUpperCase();
   const f = v.tileColors === "folder" && folder ? v.folders.find((g) => g.id === folder) : undefined;
   return el(
@@ -459,14 +469,19 @@ function avatar(v: MainView, title: string, folder: Id | null, size: "small" | "
       style: f ? { "--hue": String(COLOR_HUES[folderColor(f)]) } : undefined,
       attrs: { "aria-hidden": "true" },
     },
-    letter,
+    document ? icon("document") : letter,
   );
 }
 
 function entryRow(v: MainView, entry: EntrySummary, selected: boolean): HTMLElement {
   // Inside a folder its name would repeat on every row; everywhere else it says where the account lives.
   const where = v.filter.kind === "group" && !v.search ? null : entry.folder && v.folders.find((f) => f.id === entry.folder)?.name;
-  const sub = [entry.username || entry.url, where].filter(Boolean).join(" · ");
+  const first = entry.document
+    ? entry.attachmentCount > 0
+      ? plural(entry.attachmentCount, "file")
+      : "Text"
+    : entry.username || entry.url;
+  const sub = [first, where].filter(Boolean).join(" · ");
   return el(
     "div",
     {
@@ -475,7 +490,7 @@ function entryRow(v: MainView, entry: EntrySummary, selected: boolean): HTMLElem
       attrs: { role: "option", "aria-selected": String(selected) },
       on: { click: () => void run(api.selectEntry(entry.id)) },
     },
-    avatar(v, entry.title, entry.folder, "small"),
+    avatar(v, entry.title, entry.folder, "small", entry.document),
     el(
       "div",
       { class: "entry-text" },
@@ -497,6 +512,8 @@ function emptyText(v: MainView): string {
       return "No accounts yet. Add one with + Add.";
     case "notWorking":
       return "Nothing is marked as not working.";
+    case "documents":
+      return "No documents yet. Use + Add → Document for ID scans, a will, or a long note.";
     case "recycleBin":
       return "The Recycle Bin is empty.";
     case "group":
@@ -598,10 +615,10 @@ async function deleteEntry(d: EntryDetail, permanent: boolean): Promise<void> {
   }
 }
 
-async function removeAttachment(name: string): Promise<void> {
+async function removeAttachment(d: EntryDetail, name: string): Promise<void> {
   const ok = await confirmDialog({
-    title: "Remove attachment?",
-    message: `"${name}" will be removed from this account.`,
+    title: "Remove file?",
+    message: `"${name}" will be removed from "${d.title || "(untitled)"}".`,
     confirm: "Remove",
     danger: true,
   });
@@ -617,6 +634,98 @@ async function saveAttachment(name: string): Promise<void> {
   }
 }
 
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
+}
+
+/** One file above this gets a warning before it is added. */
+const LARGE_FILE = 5 * 1024 * 1024;
+/** All files together above this get a warning: every save rewrites them, every backup copies them. */
+const LARGE_TOTAL = 50 * 1024 * 1024;
+/** Full copies the backup folder keeps at most: the newest 20 plus one per day for 30 days. */
+const BACKUP_COPIES = 50;
+
+const FILE_ADVICE =
+  "Good fits: scans of IDs and passports, a will, insurance papers — a few MB each. Photo collections and videos make every save slow and every backup large; keep those elsewhere.";
+
+/** "Add file…": pick, show the sizes (warn when big), then attach. */
+async function addFile(): Promise<void> {
+  let pick;
+  try {
+    pick = await api.pickAttachment();
+  } catch (err) {
+    toast(errorText(err));
+    return;
+  }
+  if (!pick) return;
+  const after = pick.attachmentsBytes + pick.size;
+  if (pick.size > LARGE_FILE || after > LARGE_TOTAL) {
+    const reasons = [
+      pick.size > LARGE_FILE ? `"${pick.name}" is ${formatBytes(pick.size)}.` : "",
+      `Files in this database would grow from ${formatBytes(pick.attachmentsBytes)} to ${formatBytes(after)}.`,
+      `Every change saves the whole database again, and the backup folder keeps up to ${BACKUP_COPIES} copies of it (about ${formatBytes((pick.fileBytes + pick.size) * BACKUP_COPIES)}).`,
+      after > LARGE_TOTAL ? "For many or large documents, a separate database (for example Documents.kdbx) keeps your passwords quick to save." : "",
+      "If it's a photo of a paper, scanning it as a PDF usually makes it much smaller.",
+    ];
+    const ok = await confirmDialog({
+      title: "Add a large file?",
+      message: reasons.filter(Boolean).join(" "),
+      confirm: "Add anyway",
+    });
+    if (!ok) {
+      void api.cancelAttachment();
+      return;
+    }
+  }
+  try {
+    nav.main(await api.attachPicked());
+    toast(`Added ${pick.name} (${formatBytes(pick.size)}). Files in this database: ${formatBytes(after)}.`);
+  } catch (err) {
+    toast(errorText(err));
+  }
+}
+
+function attachmentsCard(v: MainView, d: EntryDetail): HTMLElement {
+  const entryBytes = d.attachments.reduce((sum, a) => sum + a.size, 0);
+  return el(
+    "div",
+    { class: "field-row" },
+    el(
+      "div",
+      { class: "field-label-line" },
+      el("div", { class: "field-label" }, d.attachments.length ? `Files · ${formatBytes(entryBytes)}` : "Files"),
+      button("Add file…", () => void addFile(), { icon: "add", appearance: "subtle", size: "small" }),
+    ),
+    d.attachments.length === 0
+      ? el("div", { class: "muted small" }, d.document ? "No files yet. " + FILE_ADVICE : "No files attached.")
+      : d.attachments.map((a) =>
+          el(
+            "div",
+            { class: "attachment-row" },
+            el("span", { class: "attachment-name", attrs: { title: a.name } }, a.name),
+            el("span", { class: "attachment-size" }, formatBytes(a.size)),
+            button("Open", () => void attempt(api.openAttachment(a.name)), {
+              icon: "open",
+              appearance: "subtle",
+              size: "small",
+              title: "Open a temporary copy in its usual app. Copies are deleted when you lock or close Our Logins.",
+            }),
+            button("Save as…", () => void saveAttachment(a.name), { appearance: "subtle", size: "small" }),
+            button("Remove", () => void removeAttachment(d, a.name), { appearance: "subtle", size: "small" }),
+          ),
+        ),
+    el(
+      "div",
+      { class: "storage-line muted small" },
+      `All files in this database: ${formatBytes(v.storage.attachmentsBytes)} · database file: ${formatBytes(v.storage.fileBytes)}`,
+      v.storage.attachmentsBytes > LARGE_TOTAL ? el("span", { class: "storage-warn" }, " · large: consider a separate Documents database") : null,
+    ),
+  );
+}
+
 function overflowMenu(d: EntryDetail, v: MainView): HTMLElement {
   const permanent = d.inBin || !v.recycleBinEnabled;
   const trigger = button(null, () => {}, { icon: "more", appearance: "subtle", title: "More actions" });
@@ -628,10 +737,82 @@ function overflowMenu(d: EntryDetail, v: MainView): HTMLElement {
     el(
       "fluent-menu-list",
       null,
-      el("fluent-menu-item", { on: { click: () => void run(api.toggleStale()) } }, d.stale ? "Mark working" : "Mark not working"),
+      d.document
+        ? null
+        : el("fluent-menu-item", { on: { click: () => void run(api.toggleStale()) } }, d.stale ? "Mark working" : "Mark not working"),
+      el(
+        "fluent-menu-item",
+        { on: { click: () => void run(api.setDocument(!d.document)) } },
+        d.document ? "Show as an account (login fields)" : "Make this a document (text and files)",
+      ),
       el("fluent-menu-item", { class: "danger-item", on: { click: () => void deleteEntry(d, permanent) } }, permanent ? "Delete permanently" : "Delete"),
     ),
   );
+}
+
+/** "+ Add" with a choice: an account (Ctrl+N) or a document (Ctrl+Shift+N). */
+function addMenu(): HTMLElement {
+  const trigger = button("Add", () => {}, { appearance: "primary", icon: "add", title: "Add an account (Ctrl+N) or a document (Ctrl+Shift+N)" });
+  trigger.setAttribute("slot", "trigger");
+  return el(
+    "fluent-menu",
+    null,
+    trigger,
+    el(
+      "fluent-menu-list",
+      null,
+      el("fluent-menu-item", { on: { click: () => void openForm("add", view?.notesMonospace ?? false) } }, "Account"),
+      el("fluent-menu-item", { on: { click: () => void openForm("addDocument", view?.notesMonospace ?? false) } }, "Document"),
+    ),
+  );
+}
+
+async function openAbout(): Promise<void> {
+  let info;
+  try {
+    info = await api.aboutInfo();
+  } catch (err) {
+    toast(errorText(err));
+    return;
+  }
+  const repo = info.repository;
+  const goals = [
+    "Record a new account in under ten seconds, and flag old ones as not working instead of losing them.",
+    "Keep the family's passwords and important documents in standard KeePass files that KeePass 2, KeePassXC and phone apps still open.",
+    "Never lose an edit: save on every change, with rolling backups away from the database drive.",
+    "Type logins into other apps with one hotkey (Auto-Type and Quick Access).",
+    "Stay small and local: no cloud, no account, no network access.",
+  ];
+  const handle = openDialog({
+    title: "About Our Logins",
+    class: "about-dialog",
+    body: el(
+      "div",
+      { class: "stack" },
+      el("div", { class: "muted" }, `Version ${info.version}`),
+      el("ul", { class: "about-goals" }, goals.map((g) => el("li", null, g))),
+      el(
+        "div",
+        null,
+        "Source code: ",
+        el(
+          "a",
+          {
+            class: "link",
+            href: "#",
+            on: {
+              click: (event: MouseEvent) => {
+                event.preventDefault();
+                void attempt(api.openUrl(repo));
+              },
+            },
+          },
+          repo,
+        ),
+      ),
+    ),
+    actions: [button("Close", () => handle.close(), { appearance: "primary" })],
+  });
 }
 
 function renderDetail(v: MainView): void {
@@ -673,31 +854,29 @@ function renderDetail(v: MainView): void {
     if (custom.protected) rows.push(secretRow(custom.key, fieldName));
     else rows.push(fieldRow(custom.key, custom.value ?? "", [copyButton(fieldName)], "multiline"));
   }
-  if (d.notes) rows.push(el("div", { class: "field-row" }, el("div", { class: "field-label" }, "Notes"), notesBlock(d.notes, v.notesMonospace)));
-
-  rows.push(
-    el(
-      "div",
-      { class: "field-row" },
+  if (d.document) {
+    // Document text: Markdown, with plain line breaks kept.
+    const body = el("div", { class: "markdown" + (v.notesMonospace ? " mono" : "") });
+    if (d.notes.trim()) renderMarkdown(d.notes, body, (url) => void attempt(api.openUrl(url)));
+    else body.append(el("span", { class: "muted" }, "No text. Use Edit to write or paste some."));
+    rows.push(
       el(
         "div",
-        { class: "field-label-line" },
-        el("div", { class: "field-label" }, "Attachments"),
-        button("Add file…", () => void run(api.addAttachment()), { icon: "add", appearance: "subtle", size: "small" }),
+        { class: "field-row" },
+        el(
+          "div",
+          { class: "field-label-line" },
+          el("div", { class: "field-label" }, "Text"),
+          d.notes.trim() ? button("Copy text", () => void attempt(api.copyText(d.notes), "Copied"), { icon: "copy", appearance: "subtle", size: "small" }) : null,
+        ),
+        body,
       ),
-      d.attachments.length === 0
-        ? el("div", { class: "muted small" }, "No files attached.")
-        : d.attachments.map((name) =>
-            el(
-              "div",
-              { class: "attachment-row" },
-              el("span", { class: "attachment-name" }, name),
-              button("Save as…", () => void saveAttachment(name), { appearance: "subtle", size: "small" }),
-              button("Remove", () => void removeAttachment(name), { appearance: "subtle", size: "small" }),
-            ),
-          ),
-    ),
-  );
+    );
+  } else if (d.notes) {
+    rows.push(el("div", { class: "field-row" }, el("div", { class: "field-label" }, "Notes"), notesBlock(d.notes, v.notesMonospace)));
+  }
+
+  rows.push(attachmentsCard(v, d));
 
   if (d.tags.length > 0)
     rows.push(
@@ -717,7 +896,7 @@ function renderDetail(v: MainView): void {
       el(
         "div",
         { class: "detail-header", attrs: { "data-tauri-drag-region": true } },
-        avatar(v, d.title, d.folder, "large"),
+        avatar(v, d.title, d.folder, "large", d.document),
         el(
           "div",
           { class: "detail-title-block" },
@@ -744,7 +923,7 @@ function renderDetail(v: MainView): void {
           "div",
           { class: "detail-actions" },
           button("Edit", () => void openForm("edit", v.notesMonospace), { appearance: "primary" }),
-          button("Auto-Type", () => void attempt(api.autotypeSelected())),
+          d.document ? null : button("Auto-Type", () => void attempt(api.autotypeSelected())),
           overflowMenu(d, v),
         ),
       ),
@@ -768,7 +947,7 @@ function moveSelection(delta: number): void {
   void run(api.selectEntry(view.entries[next].id));
 }
 
-/** Page shortcuts: Ctrl+K/F search, Ctrl+N add, Up/Down select, Esc clears search. */
+/** Page shortcuts: Ctrl+K/F search, Ctrl+N add account (Ctrl+Shift+N document), Up/Down select, Esc clears search. */
 export function mainKeydown(event: KeyboardEvent): void {
   if (!view || isOverlayOpen() || event.isComposing) return;
   const mod = event.ctrlKey || event.metaKey;
@@ -781,7 +960,8 @@ export function mainKeydown(event: KeyboardEvent): void {
   }
   if (mod && !event.altKey && key === "n") {
     event.preventDefault();
-    void openForm("add", view.notesMonospace);
+    // In the Documents list, or with Shift, a new entry is a document.
+    void openForm(event.shiftKey || view.filter.kind === "documents" ? "addDocument" : "add", view.notesMonospace);
     return;
   }
   if (event.key === "Escape" && event.target === searchInput) {

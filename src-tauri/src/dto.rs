@@ -64,6 +64,7 @@ pub struct GroupItem {
 pub enum FilterDto {
     All,
     NotWorking,
+    Documents,
     RecycleBin,
     Group { id: String },
 }
@@ -73,7 +74,25 @@ pub enum FilterDto {
 pub struct Counts {
     pub all: usize,
     pub not_working: usize,
+    pub documents: usize,
     pub recycle_bin: usize,
+}
+
+/// Space the open database takes, shown next to attachments.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Storage {
+    /// All attachments in the file.
+    pub attachments_bytes: u64,
+    /// The `.kdbx` file on disk as last saved.
+    pub file_bytes: u64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttachmentInfo {
+    pub name: String,
+    pub size: u64,
 }
 
 #[derive(Serialize)]
@@ -86,6 +105,9 @@ pub struct EntrySummary {
     pub stale: bool,
     /// Folder id; `None` when the entry sits in the root (or the Recycle Bin).
     pub folder: Option<String>,
+    /// A document entry (text and files) rather than a login.
+    pub document: bool,
+    pub attachment_count: usize,
 }
 
 #[derive(Serialize)]
@@ -117,7 +139,8 @@ pub struct EntryDetail {
     pub recovery_phone: String,
     pub has_security_questions: bool,
     pub custom: Vec<CustomFieldView>,
-    pub attachments: Vec<String>,
+    pub attachments: Vec<AttachmentInfo>,
+    pub document: bool,
 }
 
 #[derive(Serialize)]
@@ -137,6 +160,7 @@ pub struct MainView {
     /// False when the database has its recycle bin turned off: every delete is permanent.
     pub recycle_bin_enabled: bool,
     pub tile_colors: TileColors,
+    pub storage: Storage,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy)]
@@ -181,6 +205,26 @@ pub struct EntryForm {
     pub autotype_sequence: String,
     pub autotype_windows: String,
     pub custom: Vec<CustomFieldDto>,
+    pub document: bool,
+}
+
+/// A file the user picked to attach, before it is added (sizes in bytes).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttachmentPick {
+    pub name: String,
+    pub size: u64,
+    /// Attachments already in the database.
+    pub attachments_bytes: u64,
+    /// The database file now.
+    pub file_bytes: u64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AboutInfo {
+    pub version: &'static str,
+    pub repository: &'static str,
 }
 
 #[derive(Serialize)]

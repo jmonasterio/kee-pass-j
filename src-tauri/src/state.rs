@@ -14,6 +14,7 @@ use crate::dto::*;
 pub enum Filter {
     All,
     NotWorking,
+    Documents,
     RecycleBin,
     Group(GroupId),
 }
@@ -38,6 +39,8 @@ pub struct AppState {
     pub save_error: Option<(usize, String)>,
     /// Windows Hello / Touch ID, when this machine has it set up.
     pub quick_unlock: Option<biometric::Kind>,
+    /// File picked by "Add file…", waiting for the user to confirm: (tab, entry, path).
+    pub pending_attachment: Option<(usize, EntryId, PathBuf)>,
 }
 
 pub struct Shared(pub Mutex<AppState>);
@@ -57,6 +60,7 @@ impl Shared {
             pending_new_db: None,
             save_error: None,
             quick_unlock: biometric::available(),
+            pending_attachment: None,
         }))
     }
 
@@ -171,7 +175,7 @@ impl AppState {
                 active_tab,
                 folders: Vec::new(),
                 filter: FilterDto::All,
-                counts: Counts { all: 0, not_working: 0, recycle_bin: 0 },
+                counts: Counts { all: 0, not_working: 0, documents: 0, recycle_bin: 0 },
                 search,
                 entries: Vec::new(),
                 selected_entry: None,
@@ -180,6 +184,7 @@ impl AppState {
                 notes_monospace,
                 recycle_bin_enabled: true,
                 tile_colors,
+                storage: Storage { attachments_bytes: 0, file_bytes: 0 },
             };
         };
 
@@ -196,6 +201,7 @@ impl AppState {
         let counts = Counts {
             all: all.len(),
             not_working: all.iter().filter(|e| e.stale).count(),
+            documents: all.iter().filter(|e| e.document).count(),
             recycle_bin: bin.len(),
         };
         let mut list = if !search.is_empty() {
@@ -204,6 +210,7 @@ impl AppState {
             match db.filter {
                 Filter::All => all,
                 Filter::NotWorking => all.into_iter().filter(|e| e.stale).collect(),
+                Filter::Documents => all.into_iter().filter(|e| e.document).collect(),
                 Filter::RecycleBin => bin,
                 Filter::Group(g) => db.vault.entries_in(g),
             }
@@ -217,7 +224,7 @@ impl AppState {
         let detail = db
             .selected_entry
             .and_then(|id| list.iter().find(|e| e.id == id))
-            .map(|e| entry_detail(e, &groups, &folders));
+            .map(|e| entry_detail(&db.vault, e, &groups, &folders));
 
         MainView {
             tabs,
@@ -245,6 +252,8 @@ impl AppState {
                     url: e.url.clone(),
                     stale: e.stale,
                     folder: folders.iter().any(|f| f.id == e.group).then(|| e.group.to_string()),
+                    document: e.document,
+                    attachment_count: e.attachments.len(),
                 })
                 .collect(),
             selected_entry: db.selected_entry.map(|e| e.to_string()),
@@ -253,6 +262,10 @@ impl AppState {
             notes_monospace,
             recycle_bin_enabled: db.vault.recycle_bin_enabled(),
             tile_colors,
+            storage: Storage {
+                attachments_bytes: db.vault.attachments_total_bytes(),
+                file_bytes: std::fs::metadata(db.vault.path()).map(|m| m.len()).unwrap_or(0),
+            },
         }
     }
 }
@@ -310,6 +323,7 @@ pub fn filter_shows(filter: Filter, groups: &[GroupView], e: &EntryView) -> bool
     match filter {
         Filter::All => !binned,
         Filter::NotWorking => e.stale && !binned,
+        Filter::Documents => e.document && !binned,
         Filter::RecycleBin => binned,
         Filter::Group(g) => e.group == g,
     }
@@ -319,6 +333,7 @@ pub fn filter_dto(f: Filter) -> FilterDto {
     match f {
         Filter::All => FilterDto::All,
         Filter::NotWorking => FilterDto::NotWorking,
+        Filter::Documents => FilterDto::Documents,
         Filter::RecycleBin => FilterDto::RecycleBin,
         Filter::Group(g) => FilterDto::Group { id: g.to_string() },
     }
@@ -328,6 +343,7 @@ pub fn parse_filter(f: &FilterDto) -> Result<Filter, String> {
     Ok(match f {
         FilterDto::All => Filter::All,
         FilterDto::NotWorking => Filter::NotWorking,
+        FilterDto::Documents => Filter::Documents,
         FilterDto::RecycleBin => Filter::RecycleBin,
         FilterDto::Group { id } => Filter::Group(parse_group_id(id)?),
     })
@@ -348,7 +364,7 @@ fn folder_path(groups: &[GroupView], folders: &[GroupView], group: GroupId) -> O
     Some(names.join(" › "))
 }
 
-fn entry_detail(e: &EntryView, groups: &[GroupView], folders: &[GroupView]) -> EntryDetail {
+fn entry_detail(vault: &Vault, e: &EntryView, groups: &[GroupView], folders: &[GroupView]) -> EntryDetail {
     EntryDetail {
         id: e.id.to_string(),
         title: e.title.clone(),
@@ -378,7 +394,15 @@ fn entry_detail(e: &EntryView, groups: &[GroupView], folders: &[GroupView]) -> E
                 protected: c.protected,
             })
             .collect(),
-        attachments: e.attachments.clone(),
+        attachments: e
+            .attachments
+            .iter()
+            .map(|name| AttachmentInfo {
+                name: name.clone(),
+                size: vault.attachment_size(e.id, name).unwrap_or(0),
+            })
+            .collect(),
+        document: e.document,
     }
 }
 

@@ -19,11 +19,21 @@ older KeePass versions do not.
   USB): the newest 20 saves plus one per day for 30 days. The first save of each session
   first copies the file as it was on disk, so edits made by other apps are kept too. A
   KDBX 3.1 file also keeps a permanent `<name>-kdbx3-original.kdbx` copy.
-- Sidebar filters: All accounts (the default), Not working, folders, Recycle Bin. Folders
-  can be added, coloured and deleted (with their contents, to the Recycle Bin); letter tiles
-  take their folder's colour (Settings can turn that off). Always-visible search box,
-  view/edit/add/delete entries. Notes render readably with optional monospace and
-  per-line copy.
+- Sidebar filters: All accounts (the default), Not working, Documents, folders, Recycle Bin.
+  Folders can be added, coloured and deleted (with their contents, to the Recycle Bin);
+  letter tiles take their folder's colour (Settings can turn that off). Always-visible
+  search box, view/edit/add/delete entries. Notes render readably with optional monospace
+  and per-line copy.
+- Documents (+ Add → Document, Ctrl+Shift+N): an entry for IDs, passports, a will or other
+  papers, with a long text in Markdown (plain line breaks are kept) and attached files.
+  Stored as an ordinary entry with the string field `OurLogins.Kind = document`, so other
+  KeePass clients show it as a normal entry with notes and attachments. The overflow menu
+  turns an account into a document and back.
+- Files on any entry: add (shows the size; asks first when one file is over 5 MB or all
+  files together would pass 50 MB, because every save rewrites them and each of the up to 50
+  backups copies them), open in the usual app (a temporary copy under the app data `open`
+  folder, deleted when the last database locks, at exit and at startup), save as, remove.
+- About (sidebar): version, the project's goals, link to the source on GitHub.
 - "Add account" capture screen: site, URL, username/email, password (generator
   prefilled), recovery PIN/phone, security questions, notes. Target: under ten seconds
   to record a new account. If the site already exists it offers to replace the old entry
