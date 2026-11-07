@@ -66,6 +66,10 @@ pub enum VaultError {
     AttachmentNotFound(String),
     #[error("group name must not be empty")]
     EmptyGroupName,
+    #[error("the top group of a database cannot be deleted")]
+    CannotDeleteRoot,
+    #[error("this group holds the Recycle Bin; move the Recycle Bin out first")]
+    GroupHoldsRecycleBin,
     #[error("database saved but backup failed at {path}: {source}")]
     Backup {
         path: PathBuf,
@@ -387,7 +391,7 @@ impl Vault {
         let key = build_key(password, None)?;
         let mut db = Database::with_config(new_database_config()?);
         let now = Times::now();
-        db.meta.generator = Some("KeePassJ".to_owned());
+        db.meta.generator = Some("Our Logins".to_owned());
         db.meta.database_name = Some(stem.clone());
         db.meta.database_name_changed = Some(now);
         db.meta.memory_protection = Some(db::MemoryProtection::default());
@@ -530,15 +534,7 @@ impl Vault {
 
     /// True when `group` is the recycle bin or lies under it.
     fn in_recycle_bin(&self, group: db::GroupId) -> bool {
-        let Some(bin) = self.recycle_bin_id() else { return false };
-        let mut cur = Some(group);
-        while let Some(id) = cur {
-            if id == bin {
-                return true;
-            }
-            cur = self.db.group(id).and_then(|g| g.parent().map(|p| p.id()));
-        }
-        false
+        self.recycle_bin_id().is_some_and(|bin| self.is_ancestor(bin, group))
     }
 
     /// Returns the recycle bin group, creating "Recycle Bin" under the root when the
@@ -751,8 +747,7 @@ impl Vault {
             .entry(kid)
             .map(|e| e.parent().id())
             .ok_or(VaultError::EntryNotFound(id))?;
-        let bin_disabled = self.db.meta.recyclebin_enabled == Some(false);
-        if bin_disabled || self.in_recycle_bin(parent) {
+        if !self.recycle_bin_enabled() || self.in_recycle_bin(parent) {
             let mut entry = self.db.entry_mut(kid).ok_or(VaultError::EntryNotFound(id))?;
             entry.track_changes().remove();
         } else {
@@ -812,6 +807,55 @@ impl Vault {
         g.times.last_modification = Some(Times::now());
         self.dirty = true;
         Ok(())
+    }
+
+    /// Number of entries directly in `group` (subgroups not counted).
+    pub fn entry_count(&self, group: GroupId) -> usize {
+        self.db.group(group.into()).map_or(0, |g| g.entries().count())
+    }
+
+    /// False when the database metadata turns the recycle bin off; deletes are then permanent.
+    pub fn recycle_bin_enabled(&self) -> bool {
+        self.db.meta.recyclebin_enabled != Some(false)
+    }
+
+    /// Moves the group, with all its subgroups and entries, to the recycle bin (creating
+    /// "Recycle Bin" like KeePass). A group already in the bin, the bin itself, and every
+    /// group when the bin is disabled are deleted permanently.
+    pub fn delete_group(&mut self, id: GroupId) -> Result<(), VaultError> {
+        let gid: db::GroupId = id.into();
+        if self.db.group(gid).is_none() {
+            return Err(VaultError::GroupNotFound(id));
+        }
+        if gid == self.db.root().id() {
+            return Err(VaultError::CannotDeleteRoot);
+        }
+        if !self.recycle_bin_enabled() || self.in_recycle_bin(gid) {
+            let mut group = self.db.group_mut(gid).ok_or(VaultError::GroupNotFound(id))?;
+            group.track_changes().remove().map_err(|_| VaultError::CannotDeleteRoot)?;
+        } else {
+            // The bin may sit inside this group; moving the group into it would be a cycle.
+            if self.recycle_bin_id().is_some_and(|bin| self.is_ancestor(gid, bin)) {
+                return Err(VaultError::GroupHoldsRecycleBin);
+            }
+            let bin = self.ensure_recycle_bin();
+            let mut group = self.db.group_mut(gid).ok_or(VaultError::GroupNotFound(id))?;
+            group.track_changes().move_to(bin).map_err(|_| VaultError::GroupNotFound(bin.into()))?;
+        }
+        self.dirty = true;
+        Ok(())
+    }
+
+    /// True when `ancestor` is `group` or one of its parents.
+    fn is_ancestor(&self, ancestor: db::GroupId, group: db::GroupId) -> bool {
+        let mut cur = Some(group);
+        while let Some(id) = cur {
+            if id == ancestor {
+                return true;
+            }
+            cur = self.db.group(id).and_then(|g| g.parent().map(|p| p.id()));
+        }
+        false
     }
 
     pub fn attachment(&self, id: EntryId, name: &str) -> Option<Vec<u8>> {
@@ -1314,6 +1358,53 @@ mod tests {
         let bins: Vec<_> = v.groups().into_iter().filter(|g| g.is_recycle_bin).collect();
         assert_eq!(bins.len(), 1);
         assert_eq!(v.entry(id2).unwrap().group, bins[0].id);
+    }
+
+    #[test]
+    fn delete_group_moves_subtree_to_bin_then_permanent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut v = Vault::create(&tmp.path().join("g.kdbx"), PW).unwrap();
+        let root = v.root();
+        let mail = v.add_group(root, "Mail").unwrap();
+        let work = v.add_group(mail, "Work").unwrap();
+        let a = v.upsert_entry(edit(mail, "A")).unwrap();
+        let b = v.upsert_entry(edit(work, "B")).unwrap();
+        assert!(matches!(v.delete_group(root), Err(VaultError::CannotDeleteRoot)));
+
+        v.delete_group(mail).unwrap();
+        let bin = v.groups().into_iter().find(|g| g.is_recycle_bin).unwrap().id;
+        assert_eq!(v.groups().into_iter().find(|g| g.id == mail).unwrap().parent, Some(bin));
+        assert_eq!(v.entry(b).unwrap().group, work, "the subtree moves intact");
+        assert!(v.all_entries().is_empty());
+
+        // Already in the bin: gone for good, with everything inside.
+        v.delete_group(mail).unwrap();
+        assert!(v.entry(a).is_none() && v.entry(b).is_none());
+        assert!(v.groups().iter().all(|g| g.id != mail && g.id != work));
+
+        // Deleting the bin itself empties it; the next delete creates a new bin.
+        let c = v.upsert_entry(edit(root, "C")).unwrap();
+        v.delete_entry(c).unwrap();
+        v.delete_group(bin).unwrap();
+        assert!(v.entry(c).is_none());
+        assert!(v.groups().iter().all(|g| !g.is_recycle_bin));
+        let d = v.upsert_entry(edit(root, "D")).unwrap();
+        v.delete_entry(d).unwrap();
+        assert!(v.groups().iter().any(|g| g.is_recycle_bin && g.id == v.entry(d).unwrap().group));
+
+        // A group that contains the bin cannot be moved into it.
+        let outer = v.add_group(root, "Outer").unwrap();
+        let new_bin = v.entry(d).unwrap().group;
+        v.db.group_mut(new_bin.into()).unwrap().move_to(outer.into()).unwrap();
+        assert!(matches!(v.delete_group(outer), Err(VaultError::GroupHoldsRecycleBin)));
+
+        // With the bin turned off, deletes are permanent.
+        v.db.meta.recyclebin_enabled = Some(false);
+        let temp = v.add_group(root, "Temp").unwrap();
+        let e = v.upsert_entry(edit(temp, "E")).unwrap();
+        v.delete_group(temp).unwrap();
+        assert!(v.entry(e).is_none());
+        assert!(v.groups().iter().all(|g| g.id != temp));
     }
 
     #[test]

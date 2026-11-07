@@ -56,8 +56,10 @@ impl Default for Settings {
 }
 
 impl Settings {
-    /// Reads `settings_path()`. A missing or unreadable file yields `Default`.
+    /// Reads `settings_path()`. A missing or unreadable file yields `Default`. Moves the
+    /// data directory over from the old KeePassJ name first.
     pub fn load() -> Settings {
+        migrate_legacy_data_dir();
         Self::load_from(&settings_path())
     }
 
@@ -113,11 +115,39 @@ fn tmp_path(path: &Path) -> PathBuf {
     path.with_file_name(name)
 }
 
-/// Per-user local data directory. Falls back to `./.keepassj` when no home directory exists.
+/// Per-user local data directory. Falls back to `./.ourlogins` when no home directory exists.
 pub fn data_dir() -> PathBuf {
-    directories::ProjectDirs::from("com", "logonpro", "KeePassJ")
+    directories::ProjectDirs::from("com", "logonpro", "OurLogins")
         .map(|d| d.data_local_dir().to_path_buf())
-        .unwrap_or_else(|| PathBuf::from(".keepassj"))
+        .unwrap_or_else(|| PathBuf::from(".ourlogins"))
+}
+
+/// The app was called KeePassJ up to version 0.2. On the first start under the new name, its
+/// data directory (settings and backups) moves to `data_dir()`.
+fn migrate_legacy_data_dir() {
+    if let Some(old) = directories::ProjectDirs::from("com", "logonpro", "KeePassJ") {
+        migrate_dir(old.data_local_dir(), &data_dir());
+    }
+}
+
+/// Moves `old` to `new` unless `new` already exists. If the move fails (a file in use), the
+/// settings file is copied so the recent databases and preferences carry over.
+fn migrate_dir(old: &Path, new: &Path) {
+    if new.exists() || !old.is_dir() {
+        return;
+    }
+    if let Some(parent) = new.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    if fs::rename(old, new).is_ok() {
+        // Windows keeps data under ...\logonpro\KeePassJ\data; drop the now-empty KeePassJ folder.
+        #[cfg(windows)]
+        if let Some(parent) = old.parent() {
+            let _ = fs::remove_dir(parent);
+        }
+    } else if fs::create_dir_all(new).is_ok() {
+        let _ = fs::copy(old.join("settings.json"), new.join("settings.json"));
+    }
 }
 
 pub fn settings_path() -> PathBuf {
@@ -194,5 +224,26 @@ mod tests {
         assert_eq!(p.dir, data_dir().join("backups"));
         assert_eq!(p.keep_recent, 20);
         assert_eq!(p.keep_daily_days, 30);
+    }
+
+    #[test]
+    fn legacy_data_dir_moves_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let old = tmp.path().join("logonpro").join("KeePassJ").join("data");
+        let new = tmp.path().join("logonpro").join("OurLogins").join("data");
+        fs::create_dir_all(old.join("backups").join("db-1234")).unwrap();
+        fs::write(old.join("settings.json"), b"{}").unwrap();
+        fs::write(old.join("backups").join("db-1234").join("b.kdbx"), b"x").unwrap();
+
+        migrate_dir(&old, &new);
+        assert!(new.join("settings.json").is_file());
+        assert!(new.join("backups").join("db-1234").join("b.kdbx").is_file());
+        assert!(!old.exists());
+
+        // Once the new directory exists, a reappearing old one is left alone.
+        fs::create_dir_all(&old).unwrap();
+        fs::write(old.join("settings.json"), b"{\"reopen_last\": false}").unwrap();
+        migrate_dir(&old, &new);
+        assert_eq!(fs::read(new.join("settings.json")).unwrap(), b"{}");
     }
 }

@@ -3,7 +3,7 @@
 //! Opens the file, records every entry, adds one entry, saves (atomic + backup into a
 //! temp backup dir), reopens, and compares every original entry field by field.
 
-use keepassj::vault::{BackupPolicy, EntryEdit, EntryView, Vault};
+use ourlogins::vault::{BackupPolicy, EntryEdit, EntryView, Vault};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -50,7 +50,7 @@ fn main() {
     let path = PathBuf::from(std::env::args().nth(1).expect("path argument"));
     let pw = std::env::var("KPJ_PW").expect("KPJ_PW not set");
     let backups = BackupPolicy {
-        dir: std::env::temp_dir().join("keepassj").join("backups-test"),
+        dir: std::env::temp_dir().join("ourlogins").join("backups-test"),
         keep_recent: 20,
         keep_daily_days: 30,
     };

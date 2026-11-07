@@ -1,0 +1,20 @@
+{
+  "name": "ourlogins-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node web/build.mjs",
+    "check": "tsc --noEmit -p .",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@fluentui/tokens": "^1.0.0-alpha.24",
+    "@fluentui/web-components": "^3.1.4",
+    "@tauri-apps/api": "^2.12.4"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.12.4",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2"
+  }
+}

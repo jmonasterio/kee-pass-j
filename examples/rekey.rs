@@ -1,8 +1,8 @@
 //! Change the master password of a database.
 //! Usage: KPJ_PW=<old> KPJ_NEW_PW=<new> cargo run --example rekey -- <path.kdbx>
-//! The pre-change file is kept as a backup under %TEMP%\keepassj\backups-rekey.
+//! The pre-change file is kept as a backup under %TEMP%\ourlogins\backups-rekey.
 
-use keepassj::vault::{BackupPolicy, Vault};
+use ourlogins::vault::{BackupPolicy, Vault};
 use std::path::PathBuf;
 
 fn main() {
@@ -10,7 +10,7 @@ fn main() {
     let old = std::env::var("KPJ_PW").expect("KPJ_PW not set");
     let new = std::env::var("KPJ_NEW_PW").expect("KPJ_NEW_PW not set");
     let backups = BackupPolicy {
-        dir: std::env::temp_dir().join("keepassj").join("backups-rekey"),
+        dir: std::env::temp_dir().join("ourlogins").join("backups-rekey"),
         keep_recent: 20,
         keep_daily_days: 30,
     };

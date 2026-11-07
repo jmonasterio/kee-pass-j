@@ -1,8 +1,10 @@
 # Module contracts
 
-Single crate `keepassj`: library (`src/lib.rs`) plus binary (`src/main.rs`). The library
-has no Slint dependency; everything UI lives in `main.rs` and `ui/`. All public types below
-are the integration contract between modules. Keep signatures as written; add helpers freely.
+Cargo workspace. The root crate `ourlogins` is the library (`src/lib.rs`: vault, generator,
+settings, autotype) and has no UI dependency. `src-tauri/` is the desktop app crate
+(`ourlogins-app`, binary `OurLogins`), a Tauri 2 shell around the library. `web/` is the
+frontend it embeds. All public types below are the integration contract between modules.
+Keep signatures as written; add helpers freely.
 
 Error type per module: `thiserror` enum named `<Module>Error`. No `anyhow` in the library.
 
@@ -65,6 +67,9 @@ impl Vault {
     pub fn set_stale(&mut self, id: EntryId, stale: bool) -> Result<(), VaultError>;
     pub fn add_group(&mut self, parent: GroupId, name: &str) -> Result<GroupId, VaultError>;
     pub fn rename_group(&mut self, id: GroupId, name: &str) -> Result<(), VaultError>;
+    pub fn delete_group(&mut self, id: GroupId) -> Result<(), VaultError>;  // whole subtree to the Recycle Bin; permanent when already in the bin, for the bin itself, or when the bin is disabled; root refused
+    pub fn entry_count(&self, group: GroupId) -> usize;                     // direct entries only
+    pub fn recycle_bin_enabled(&self) -> bool;                             // false when the metadata turns the bin off (deletes are permanent)
     pub fn attachment(&self, id: EntryId, name: &str) -> Option<Vec<u8>>;
     pub fn add_attachment(&mut self, id: EntryId, name: &str, bytes: Vec<u8>) -> Result<(), VaultError>;
     pub fn remove_attachment(&mut self, id: EntryId, name: &str) -> Result<(), VaultError>;
@@ -108,7 +113,7 @@ impl Settings {
     pub fn save(&self) -> Result<(), SettingsError>; // atomic write
     pub fn touch_recent(&mut self, path: &Path, keyfile: Option<&Path>);  // move/insert to front
 }
-pub fn data_dir() -> std::path::PathBuf;     // directories::ProjectDirs::from("com","logonpro","KeePassJ").data_local_dir()
+pub fn data_dir() -> std::path::PathBuf;     // directories::ProjectDirs::from("com","logonpro","OurLogins").data_local_dir(); Settings::load() first moves the old "KeePassJ" directory here once
 pub fn settings_path() -> std::path::PathBuf; // data_dir()/settings.json
 pub fn backup_policy() -> vault::BackupPolicy;  // dir = data_dir()/backups, 20, 30
 ```
@@ -138,11 +143,40 @@ pub fn parse_hotkey(s: &str) -> Result<global_hotkey::hotkey::HotKey, AutotypeEr
 `DELAY`-free; the caller is responsible for giving focus back to the target window
 (hide our window, sleep ~250 ms).
 
-## UI (`main.rs`, `ui/`)
+## UI (`src-tauri/`, `web/`)
 
-Slint 1.18. One `AppWindow` with a `page` enum: `Unlock`, `Main`, `AddAccount`, `EditEntry`,
-`Generator`, `Settings`. Databases are tabs; each tab holds a `Vault`. Models exposed to
-Slint are `slint::VecModel` of flat structs (`GroupItem`, `EntryItem`, `TabItem`).
-Every mutation goes: Slint callback → `Vault` method → `vault.save(&backup_policy())` →
-rebuild models. Save failures show a persistent banner with the error; the app never
-silently drops an edit.
+Tauri 2 with the system webview (WebView2 on Windows, WKWebView on macOS). The frontend is
+vanilla TypeScript plus Fluent UI Web Components v3 (`web/src`), bundled by esbuild
+(`web/build.mjs`) into `web/dist`. The `custom-protocol` feature is on by default, so
+`cargo build --release -p ourlogins-app` compiles `web/dist` into one self-contained
+`OurLogins.exe`. Run `npm run build` first.
+
+- `src-tauri/src/state.rs`: `AppState` (open databases as tabs, selection, search, recent
+  list, pending new database, Auto-Type chooser, last save error) behind one `Mutex`, plus
+  `main_view()`/`unlock_view()` that build the page data.
+- `src-tauri/src/commands.rs`: every `#[tauri::command]` the page can call. Mutating commands
+  go: `Vault` method → `save_active()` (records a failure in `save_error`) → return the fresh
+  `MainView`. Save failures show a persistent banner with Retry; an edit is never dropped
+  silently. Commands are `async`, so Argon2 and the blocking native file dialogs run off the
+  main thread.
+- `src-tauri/src/dto.rs`: wire types (camelCase JSON), mirrored by `web/src/api.ts`.
+- `src-tauri/src/typing.rs`: global hotkey (`global-hotkey`, manager owned by the main
+  thread) and Auto-Type. Typing runs on the main thread. `autotype_selected` hides the window,
+  waits 250 ms, types, then shows the window again; a hotkey with several matches emits
+  `autotype-choose` and the page shows a chooser.
+
+Security rules for the webview:
+
+- Vault text reaches the DOM only through text nodes and properties. `web/build.mjs` fails
+  the build if `web/src` uses `innerHTML`, `outerHTML`, `insertAdjacentHTML`,
+  `document.write`, `eval` or `new Function`.
+- The CSP in `tauri.conf.json` allows only the app's own scripts, with no inline scripts or
+  `eval`; `connect-src` is limited to Tauri IPC. A navigation guard keeps the webview on the
+  app's own pages; links open in the browser through `open_url`.
+- List and detail data never include passwords or other protected values. `copy_field`
+  writes the clipboard from Rust. `reveal_field` returns one value when the user presses
+  Show. The edit form necessarily carries the entry's values.
+- The window runs `incognito`. On Windows, WebView2 general autofill and password autosave
+  are off, and release builds disable browser shortcuts (reload, print, find, devtools).
+- Capabilities (`src-tauri/capabilities/default.json`) grant the page only event listening
+  and window dragging. File, dialog and clipboard plugins are used from Rust only.

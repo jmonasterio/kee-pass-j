@@ -1,0 +1,35 @@
+[package]
+name = "ourlogins-app"
+version = "0.3.0"
+edition = "2021"
+rust-version = "1.89"
+description = "Our Logins desktop app (Tauri shell around the ourlogins library)"
+license = "MIT"
+
+[[bin]]
+name = "OurLogins"
+path = "src/main.rs"
+
+[features]
+# Always embed web/dist in the binary, so plain `cargo build --release` yields the single exe.
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[dependencies]
+ourlogins = { path = ".." }
+tauri = { version = "2.12", features = ["macos-private-api"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-clipboard-manager = "2"
+serde = { version = "1", features = ["derive"] }
+chrono = "0.4"
+uuid = "1"
+global-hotkey = "0.9"
+
+[target.'cfg(windows)'.dependencies]
+windows-version = "0.1"
+# Same versions wry uses; needed to switch off WebView2 autofill and password autosave.
+webview2-com = "0.39"
+windows-core = "0.62"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }

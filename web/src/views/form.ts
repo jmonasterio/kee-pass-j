@@ -1,0 +1,341 @@
+import { api, errorText, type CustomField, type EntryForm, type FormData, type FormMode, type Id } from "../api";
+import { onClosed } from "../dialogs";
+import { button, debounce, el, field } from "../dom";
+import { nav } from "../nav";
+import { toast } from "../toast";
+
+type TextInputEl = HTMLElementTagNameMap["fluent-text-input"];
+type TextAreaEl = HTMLElementTagNameMap["fluent-textarea"];
+type CheckboxEl = HTMLElementTagNameMap["fluent-checkbox"];
+
+function textInput(value: string, opts: { placeholder?: string; secret?: boolean; class?: string; autofocus?: boolean } = {}): TextInputEl {
+  return el("fluent-text-input", {
+    class: opts.class,
+    value,
+    placeholder: opts.placeholder ?? "",
+    type: opts.secret ? "password" : "text",
+    autocomplete: opts.secret ? "off" : undefined,
+    attrs: { spellcheck: opts.secret ? "false" : undefined, autocomplete: opts.secret ? "off" : undefined, autofocus: opts.autofocus },
+  });
+}
+
+function textArea(value: string, opts: { placeholder?: string; class?: string; secret?: boolean } = {}): TextAreaEl {
+  return el("fluent-textarea", {
+    class: opts.class,
+    value,
+    placeholder: opts.placeholder ?? "",
+    resize: "vertical",
+    attrs: { spellcheck: opts.secret ? "false" : undefined, autocomplete: opts.secret ? "off" : undefined },
+  });
+}
+
+function checkbox(label: string, checked: boolean, onChange: (checked: boolean) => void): { field: HTMLElement; box: CheckboxEl } {
+  const box = el("fluent-checkbox", { attrs: { checked }, on: { change: () => onChange(box.checked) } });
+  return { field: field(label, box, { position: "after" }), box };
+}
+
+interface CustomRow {
+  row: HTMLElement;
+  key: TextInputEl;
+  value: TextInputEl;
+  prot: CheckboxEl;
+}
+
+/** Opens the Add/Edit account drawer. */
+export async function openForm(mode: FormMode, notesMonospace: boolean): Promise<void> {
+  if (document.querySelector("fluent-drawer")) return;
+  let data: FormData;
+  try {
+    data = await api.formOpen(mode);
+  } catch (err) {
+    toast(errorText(err));
+    return;
+  }
+  const entry = data.entry;
+  const editing = data.mode === "edit";
+
+  const title = textInput(entry.title, { autofocus: true, placeholder: "e.g. Netflix" });
+  const url = textInput(entry.url, { placeholder: "netflix.com" });
+  const username = textInput(entry.username);
+  const password = textInput(entry.password, { class: "password-input", secret: true });
+  // The password is generated, so show it in clear text like a normal field.
+  password.type = "text";
+  const recoveryPin = textInput(entry.recoveryPin, { secret: true });
+  const recoveryPhone = textInput(entry.recoveryPhone);
+  const securityQuestions = textArea(entry.securityQuestions, { secret: true });
+  const notes = textArea(entry.notes, { class: notesMonospace ? "mono" : undefined });
+  const error = el("div", { class: "form-error", attrs: { role: "alert" } });
+
+  // Generator.
+  const gen = { ...data.gen, length: Math.min(64, Math.max(8, data.gen.length)) };
+  let genSeq = 0;
+  const regenerate = async () => {
+    const seq = ++genSeq;
+    try {
+      const next = await api.generate({ ...gen });
+      if (seq === genSeq) password.value = next;
+    } catch (err) {
+      if (seq === genSeq) toast(errorText(err));
+    }
+  };
+  const lengthLabel = el("span", { class: "slider-value" }, String(gen.length));
+  const slider = el("fluent-slider", {
+    class: "length-slider",
+    attrs: { min: "8", max: "64", step: "1", value: String(gen.length), "aria-label": "Password length" },
+    on: {
+      change: () => {
+        const length = Number(slider.value);
+        if (!Number.isFinite(length) || length === gen.length) return;
+        gen.length = length;
+        lengthLabel.textContent = String(length);
+        void regenerate();
+      },
+    },
+  });
+  const digits = checkbox("Digits", gen.digits, (on) => {
+    gen.digits = on;
+    void regenerate();
+  });
+  const symbols = checkbox("Symbols", gen.symbols, (on) => {
+    gen.symbols = on;
+    void regenerate();
+  });
+
+  // Duplicate detection.
+  const dupBar = el("div", { class: "dup-slot" });
+  let dupSeq = 0;
+  const checkDuplicate = debounce(async () => {
+    const seq = ++dupSeq;
+    try {
+      const dup = await api.findDuplicate(title.value.trim(), url.value.trim(), entry.id);
+      if (seq !== dupSeq) return;
+      if (!dup) {
+        dupBar.replaceChildren();
+        return;
+      }
+      const replace = button("Replace", () => void save(dup.id), { size: "small" });
+      replace.setAttribute("slot", "actions");
+      dupBar.replaceChildren(
+        el(
+          "fluent-message-bar",
+          { intent: "warning", layout: "multiline" },
+          `Already have "${dup.title}". Replace it? The old entry will be kept and marked not working.`,
+          replace,
+        ),
+      );
+    } catch {
+      // Duplicate hints are advisory; a failed lookup just shows no hint.
+      if (seq === dupSeq) dupBar.replaceChildren();
+    }
+  }, 200);
+  title.addEventListener("input", checkDuplicate);
+  url.addEventListener("input", checkDuplicate);
+
+  // Group.
+  const group = el(
+    "fluent-dropdown",
+    { class: "group-dropdown" },
+    el(
+      "fluent-listbox",
+      null,
+      data.groups.map((g) =>
+        el(
+          "fluent-option",
+          {
+            class: g.isRecycleBin ? "bin" : undefined,
+            style: { "padding-inline-start": `${8 + g.depth * 16}px` },
+            attrs: { value: g.id, selected: g.id === entry.group },
+          },
+          g.name,
+        ),
+      ),
+    ),
+  );
+
+  // Edit-only fields.
+  const tags = textInput(entry.tags, { placeholder: "Comma separated" });
+  const customRows: CustomRow[] = [];
+  const customList = el("div", { class: "custom-list" });
+  const addCustomRow = (cf: CustomField) => {
+    const key = textInput(cf.key, { placeholder: "Name" });
+    const value = textInput(cf.value, { placeholder: "Value", secret: cf.protected });
+    const prot = el("fluent-checkbox", { attrs: { checked: cf.protected } });
+    prot.addEventListener("change", () => {
+      value.type = prot.checked ? "password" : "text";
+    });
+    const item: CustomRow = {
+      key,
+      value,
+      prot,
+      row: el(
+        "div",
+        { class: "custom-row" },
+        key,
+        value,
+        field("Protected", prot, { position: "after" }),
+        button(
+          null,
+          () => {
+            customRows.splice(customRows.indexOf(item), 1);
+            item.row.remove();
+          },
+          { icon: "dismiss", appearance: "subtle", title: "Remove field" },
+        ),
+      ),
+    };
+    customRows.push(item);
+    customList.appendChild(item.row);
+    return item;
+  };
+  for (const cf of entry.custom) addCustomRow(cf);
+  const sequence = textInput(entry.autotypeSequence, { placeholder: "{USERNAME}{TAB}{PASSWORD}{ENTER}", class: "mono" });
+  sequence.setAttribute("spellcheck", "false");
+  const windows = textArea(entry.autotypeWindows, { class: "mono", placeholder: "One window title pattern per line" });
+  windows.setAttribute("spellcheck", "false");
+
+  const saveButton = button(editing ? "Save changes" : "Save account", () => void save(null), { appearance: "primary" });
+  let busy = false;
+  let closed = false;
+  const save = async (replace: Id | null) => {
+    if (busy || closed) return;
+    const name = title.value.trim();
+    if (!name) {
+      error.textContent = "Give the account a name first.";
+      title.focus();
+      return;
+    }
+    const form: EntryForm = {
+      id: entry.id,
+      group: group.value || entry.group,
+      title: name,
+      url: url.value.trim(),
+      username: username.value,
+      password: password.value,
+      recoveryPin: recoveryPin.value,
+      recoveryPhone: recoveryPhone.value,
+      securityQuestions: securityQuestions.value,
+      notes: notes.value,
+      tags: editing ? tags.value : entry.tags,
+      autotypeSequence: editing ? sequence.value.trim() : entry.autotypeSequence,
+      autotypeWindows: editing ? windows.value : entry.autotypeWindows,
+      custom: editing
+        ? customRows
+            .map((r) => ({ key: r.key.value.trim(), value: r.value.value, protected: r.prot.checked }))
+            .filter((c) => c.key !== "" || c.value !== "")
+        : entry.custom,
+    };
+    busy = true;
+    saveButton.disabled = true;
+    error.textContent = "";
+    try {
+      const view = await api.formSave(form, replace);
+      closed = true;
+      drawer.hide();
+      nav.main(view);
+    } catch (err) {
+      error.textContent = errorText(err);
+    } finally {
+      busy = false;
+      saveButton.disabled = false;
+    }
+  };
+
+  const closeButton = button(null, () => {}, { icon: "dismiss", appearance: "subtle", title: "Close" });
+  closeButton.setAttribute("slot", "close");
+  const cancelButton = button("Cancel", () => drawer.hide());
+  const footer = el("div", { class: "drawer-footer", attrs: { slot: "footer" } }, cancelButton, saveButton);
+
+  const content = el(
+    "div",
+    { class: "form-content" },
+    field("Site or service", title),
+    field("Website", url),
+    dupBar,
+    field("Username or email", username),
+    el(
+      "div",
+      { class: "password-block" },
+      field("Password", password),
+      el(
+        "div",
+        { class: "password-actions" },
+        button("Regenerate", () => void regenerate(), { icon: "refresh" }),
+        button(
+          "Copy",
+          async () => {
+            try {
+              await api.copyText(password.value);
+              toast("Copied");
+            } catch (err) {
+              toast(errorText(err));
+            }
+          },
+          { icon: "copy" },
+        ),
+      ),
+      el(
+        "div",
+        { class: "generator" },
+        el("div", { class: "slider-line" }, el("span", { class: "generator-label" }, "Length"), slider, lengthLabel),
+        el("div", { class: "checkbox-line" }, digits.field, symbols.field),
+      ),
+    ),
+    el("div", { class: "two-col" }, field("Recovery PIN", recoveryPin), field("Recovery phone", recoveryPhone)),
+    field("Security questions", securityQuestions),
+    field("Notes", notes),
+    field("Group", group),
+    editing
+      ? [
+          field("Tags", tags),
+          el(
+            "div",
+            { class: "form-section" },
+            el("div", { class: "section-label" }, "Custom fields"),
+            customList,
+            button("Add field", () => addCustomRow({ key: "", value: "", protected: false }).key.focus(), {
+              icon: "add",
+              appearance: "subtle",
+              class: "align-start",
+            }),
+          ),
+          el(
+            "div",
+            { class: "form-section" },
+            el("div", { class: "section-label" }, "Auto-Type"),
+            field("Sequence (empty = default from Settings)", sequence),
+            field("Window titles", windows),
+          ),
+        ]
+      : null,
+    error,
+  );
+
+  const drawer = el(
+    "fluent-drawer",
+    { class: "form-drawer", attrs: { position: "end", "aria-label": editing ? "Edit account" : "Add account" } },
+    el(
+      "fluent-drawer-body",
+      null,
+      el("h2", { class: "dialog-title", attrs: { slot: "title" } }, editing ? "Edit account" : "Add account"),
+      closeButton,
+      content,
+      footer,
+    ),
+  );
+  drawer.addEventListener("keydown", (event: KeyboardEvent) => {
+    if (event.key !== "Enter" || event.isComposing) return;
+    const target = event.target as HTMLElement | null;
+    if (event.ctrlKey || event.metaKey) {
+      event.preventDefault();
+      void save(null);
+    } else if (target?.tagName === "FLUENT-TEXT-INPUT") {
+      event.preventDefault();
+      void save(null);
+    }
+  });
+  onClosed(drawer, () => {
+    closed = true;
+  });
+  document.body.appendChild(drawer);
+  drawer.show();
+}

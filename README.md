@@ -1,8 +1,9 @@
-# KeePassJ
+# Our Logins
 
-A KDBX 4 password manager in Rust (Slint UI) for two people: one on Windows with the
-database on a USB SSD, one on macOS with her own database. Files stay fully compatible
-with KeePass 2.x and KeePassXC.
+A KDBX 4 password manager in Rust for two people: one on Windows with the database on a USB
+SSD, one on macOS with her own database. Files stay fully compatible with KeePass 2.x and
+KeePassXC. The window is a Tauri 2 app: a Rust backend with a TypeScript + Fluent UI web
+frontend in the system webview.
 
 Older KDBX 3.1 files open normally and are rewritten as KDBX 4 on their first save
 (the `keepass` crate writes only KDBX 4). KeePass 2.35+ and KeePassXC 2.3+ open KDBX 4;
@@ -41,16 +42,34 @@ recovery, web sharing, agent sharing, TOTP, Windows Hello / Touch ID, SQLite.
 
 ## Layout
 
-- `src/vault.rs` — KDBX open/save/backup, entry and group model, search, stale flag.
-- `src/generator.rs` — password generator.
-- `src/settings.rs` — per-user settings and recent files.
-- `src/autotype.rs` — sequence grammar, keystroke injection, window matching.
-- `src/main.rs` — Slint UI and wiring.
-- `ui/*.slint` — UI definitions.
-- `docs/ARCHITECTURE.md` — module contracts.
+- `src/vault.rs`: KDBX open/save/backup, entry and group model, search, stale flag.
+- `src/generator.rs`: password generator.
+- `src/settings.rs`: per-user settings and recent files.
+- `src/autotype.rs`: sequence grammar, keystroke injection, window matching.
+- `src-tauri/`: the desktop app (Tauri commands, app state, hotkey and Auto-Type wiring).
+- `web/`: the frontend (vanilla TypeScript, Fluent UI Web Components, CSS).
+- `docs/ARCHITECTURE.md`: module contracts and the webview security rules.
 
 ## Build
 
+Needs Rust and Node 22.
+
 ```
-cargo build --release
+npm ci
+npm run build                       # web/src -> web/dist
+cargo build --release -p ourlogins-app
 ```
+
+Windows: the result is one file, `target/release/OurLogins.exe`, with the frontend compiled
+in. It uses the WebView2 runtime that ships with Windows 11 and current Windows 10.
+
+macOS (universal `.app`, needs macOS 12 or later):
+
+```
+npx tauri build --target universal-apple-darwin --bundles app
+```
+
+Checks: `cargo test -p ourlogins --lib` and `npm run check` (TypeScript).
+
+Up to version 0.2 the app was called KeePassJ. On first start it moves the old settings and
+backups folder (`logonpro\KeePassJ` / `com.logonpro.KeePassJ`) to the new `OurLogins` one.

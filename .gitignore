@@ -1,5 +1,8 @@
 /target
 /dist
+/node_modules
+/web/dist
+/src-tauri/gen
 *.kdbx
 !tests/fixtures/*.kdbx
 *.kdbx.tmp

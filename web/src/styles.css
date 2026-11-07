@@ -1,0 +1,1166 @@
+/* Our Logins: layout on Fluent 2 tokens (set as CSS custom properties by setTheme). 4px grid. */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: var(--fontFamilyBase);
+  font-size: var(--fontSizeBase300);
+  line-height: var(--lineHeightBase300);
+  color: var(--colorNeutralForeground1);
+  background: var(--colorNeutralBackground2);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+/* Mica (Windows 11) / vibrancy (macOS): the window paints the material behind a transparent webview. */
+html[data-backdrop="true"],
+html[data-backdrop="true"] body {
+  background: transparent;
+}
+
+#app {
+  height: 100%;
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+.muted {
+  color: var(--colorNeutralForeground3);
+}
+
+.small {
+  font-size: var(--fontSizeBase200);
+}
+
+.mono,
+.mono::part(control) {
+  font-family: var(--fontFamilyMonospace);
+}
+
+.spacer,
+.grow {
+  flex: 1;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.button-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.button-row.end {
+  justify-content: flex-end;
+}
+
+.section-label {
+  font-size: var(--fontSizeBase200);
+  font-weight: var(--fontWeightSemibold);
+  color: var(--colorNeutralForeground3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.form-error {
+  color: var(--colorPaletteRedForeground1);
+  font-size: var(--fontSizeBase200);
+  min-height: 0;
+}
+
+.form-error:empty {
+  display: none;
+}
+
+.icon {
+  flex-shrink: 0;
+}
+
+/* Fluent's slotted-svg rules fill icons; ours are stroke-only outlines. */
+svg.icon,
+svg.icon * {
+  fill: none;
+}
+
+fluent-button .icon {
+  width: 20px;
+  height: 20px;
+}
+
+fluent-button[size="small"] .icon {
+  width: 16px;
+  height: 16px;
+}
+
+/* Destructive confirmations: Fluent v3 has no danger appearance, so tint the primary button. */
+fluent-button.danger {
+  background-color: var(--colorStatusDangerBackground3);
+  border-color: transparent;
+  color: var(--colorNeutralForegroundOnBrand);
+}
+
+fluent-button.danger:hover {
+  background-color: var(--colorStatusDangerBackground3Hover);
+}
+
+fluent-button.danger:active {
+  background-color: var(--colorStatusDangerBackground3Pressed);
+}
+
+fluent-menu-item.danger-item {
+  color: var(--colorPaletteRedForeground1);
+}
+
+.drag-strip {
+  position: fixed;
+  inset: 0 0 auto 0;
+  height: 32px;
+  z-index: 1;
+}
+
+/* ---------- Unlock page ---------- */
+
+.unlock-page {
+  height: 100%;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  overflow: auto;
+  padding: 64px 24px 32px;
+}
+
+.unlock-card {
+  position: relative;
+  z-index: 2;
+  width: 100%;
+  max-width: 560px;
+  background: var(--colorNeutralBackground1);
+  border: 1px solid var(--colorNeutralStroke2);
+  border-radius: var(--borderRadiusXLarge);
+  box-shadow: var(--shadow16);
+  padding: 28px 32px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.unlock-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.app-title {
+  font-size: var(--fontSizeBase600);
+  line-height: var(--lineHeightBase600);
+  font-weight: var(--fontWeightSemibold);
+}
+
+.recent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 280px;
+  overflow: auto;
+}
+
+.recent-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 8px 8px 12px;
+  border-radius: var(--borderRadiusMedium);
+  border: 1px solid transparent;
+}
+
+.recent-row:hover {
+  background: var(--colorSubtleBackgroundHover);
+}
+
+.recent-row.selected {
+  background: var(--colorSubtleBackgroundSelected);
+  border-color: var(--colorBrandStroke1);
+}
+
+.recent-row:focus-visible {
+  outline: 2px solid var(--colorStrokeFocus2);
+  outline-offset: -2px;
+}
+
+.recent-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.recent-name-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.recent-name {
+  font-weight: var(--fontWeightSemibold);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent-row.missing .recent-name {
+  color: var(--colorNeutralForeground3);
+}
+
+.recent-path {
+  font-size: var(--fontSizeBase200);
+  color: var(--colorNeutralForeground3);
+  overflow-wrap: anywhere;
+}
+
+.recent-keyfile {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--fontSizeBase200);
+  color: var(--colorNeutralForeground2);
+}
+
+.keyfile-name {
+  font-weight: var(--fontWeightSemibold);
+}
+
+.empty-recent {
+  padding: 8px 0;
+}
+
+.create-path {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--fontFamilyMonospace);
+  font-size: var(--fontSizeBase200);
+  color: var(--colorNeutralForeground2);
+  overflow-wrap: anywhere;
+}
+
+fluent-field fluent-text-input,
+fluent-field fluent-textarea,
+fluent-field fluent-dropdown {
+  width: 100%;
+}
+
+/* Fluent caps text inputs at 400px and gives the textarea a fixed inner width. */
+fluent-text-input {
+  max-width: none;
+}
+
+fluent-textarea::part(root) {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+fluent-textarea {
+  min-height: 72px;
+}
+
+/* Step marks for every integer look like a dashed rail; the value label shows the number. */
+fluent-slider {
+  --step-rate: 100% !important;
+}
+
+/* Header and footer stay put; only the form scrolls. */
+fluent-drawer-body::part(content) {
+  overflow-y: auto;
+  min-height: 0;
+  padding-top: 8px;
+}
+
+/* ---------- Main page ---------- */
+
+.main-page {
+  display: flex;
+  height: 100%;
+}
+
+.sidebar {
+  width: 228px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--colorNeutralBackground2);
+}
+
+html[data-backdrop="true"] .sidebar {
+  background: transparent;
+}
+
+.sidebar-top {
+  height: 8px;
+  flex-shrink: 0;
+}
+
+/* Room for the overlay traffic-light buttons. */
+html[data-os="macos"] .sidebar-top {
+  height: 36px;
+}
+
+.sidebar-scroll {
+  flex: 1;
+  overflow: auto;
+  padding: 4px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 32px;
+  padding: 12px 8px 4px 12px;
+  font-size: var(--fontSizeBase200);
+  font-weight: var(--fontWeightSemibold);
+  color: var(--colorNeutralForeground3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.section-head:first-child {
+  padding-top: 4px;
+}
+
+.nav-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.nav-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 36px;
+  padding: 0 4px 0 12px;
+  border-radius: var(--borderRadiusMedium);
+  color: var(--colorNeutralForeground2);
+}
+
+.nav-row:hover {
+  background: var(--colorSubtleBackgroundHover);
+  color: var(--colorNeutralForeground1);
+}
+
+.nav-row.selected {
+  background: var(--colorSubtleBackgroundSelected);
+  color: var(--colorNeutralForeground1);
+  font-weight: var(--fontWeightSemibold);
+}
+
+/* Windows 11 navigation selection pill. */
+.nav-row.selected::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--colorBrandBackground);
+}
+
+.nav-row:focus-visible {
+  outline: 2px solid var(--colorStrokeFocus2);
+  outline-offset: -2px;
+}
+
+.nav-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.group-row {
+  padding-left: calc(12px + var(--depth, 0) * 16px);
+}
+
+.group-row.bin {
+  color: var(--colorNeutralForeground3);
+}
+
+.row-action {
+  opacity: 0;
+}
+
+.nav-row:hover .row-action,
+.nav-row.selected .row-action,
+.row-action:focus-visible {
+  opacity: 1;
+}
+
+.dirty-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--colorPaletteRedForeground1);
+  flex-shrink: 0;
+}
+
+.nav-button {
+  justify-content: flex-start;
+  width: 100%;
+  font-weight: var(--fontWeightRegular);
+}
+
+.sidebar-bottom {
+  padding: 8px;
+}
+
+.content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--colorNeutralBackground1);
+}
+
+/* With a backdrop the content area sits on the material like a Windows 11 layer. */
+html[data-backdrop="true"] .content {
+  border-top-left-radius: var(--borderRadiusXLarge);
+  border-left: 1px solid var(--colorNeutralStroke2);
+  border-top: 1px solid var(--colorNeutralStroke2);
+  margin-top: 0;
+  box-shadow: var(--shadow4);
+  overflow: hidden;
+}
+
+html[data-backdrop="true"][data-os="windows"] .content {
+  margin-top: 8px;
+}
+
+.save-banner:not(:empty) {
+  padding: 8px 12px 0;
+}
+
+.panes {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.list-pane {
+  width: 308px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--colorNeutralStroke2);
+}
+
+.list-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+}
+
+html[data-os="macos"] .list-toolbar {
+  padding-top: 28px;
+}
+
+.search-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.search-input .icon {
+  width: 16px;
+  height: 16px;
+  color: var(--colorNeutralForeground3);
+}
+
+.entry-list {
+  flex: 1;
+  overflow: auto;
+  padding: 0 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  outline: none;
+}
+
+.entry-row {
+  position: relative;
+  padding: 8px 12px;
+  border-radius: var(--borderRadiusMedium);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.entry-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* Letter tiles; hue comes from the title. */
+.avatar {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  font-weight: var(--fontWeightSemibold);
+  background: hsl(var(--hue) 62% 90%);
+  color: hsl(var(--hue) 55% 28%);
+  box-shadow: inset 0 0 0 1px hsl(var(--hue) 40% 80% / 0.6);
+  user-select: none;
+}
+
+.avatar.small {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--borderRadiusMedium);
+  font-size: var(--fontSizeBase300);
+}
+
+.avatar.large {
+  width: 52px;
+  height: 52px;
+  border-radius: var(--borderRadiusXLarge);
+  font-size: var(--fontSizeBase600);
+  box-shadow: var(--shadow4), inset 0 0 0 1px hsl(var(--hue) 40% 80% / 0.6);
+}
+
+@media (prefers-color-scheme: dark) {
+  .avatar {
+    background: hsl(var(--hue) 35% 26%);
+    color: hsl(var(--hue) 70% 85%);
+    box-shadow: inset 0 0 0 1px hsl(var(--hue) 35% 36% / 0.6);
+  }
+
+  .avatar.large {
+    box-shadow: var(--shadow4), inset 0 0 0 1px hsl(var(--hue) 35% 36% / 0.6);
+  }
+}
+
+.entry-row.stale .avatar {
+  filter: grayscale(1);
+  opacity: 0.6;
+}
+
+.entry-row:hover {
+  background: var(--colorSubtleBackgroundHover);
+}
+
+.entry-row.selected {
+  background: var(--colorSubtleBackgroundSelected);
+}
+
+.entry-row.selected::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 12px;
+  bottom: 12px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--colorBrandBackground);
+}
+
+.entry-title-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.entry-title {
+  font-weight: var(--fontWeightSemibold);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.entry-sub {
+  font-size: var(--fontSizeBase200);
+  color: var(--colorNeutralForeground3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-height: 16px;
+}
+
+.entry-row.stale .entry-title {
+  color: var(--colorNeutralForeground3);
+  font-weight: var(--fontWeightRegular);
+}
+
+.stale-divider {
+  margin: 8px 0;
+}
+
+.empty-state {
+  padding: 48px 24px;
+  text-align: center;
+  color: var(--colorNeutralForeground3);
+}
+
+.detail-pane {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--colorNeutralBackground2);
+}
+
+.detail-scroll {
+  flex: 1;
+  overflow: auto;
+  padding: 24px 32px 32px;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+html[data-os="macos"] .detail-scroll {
+  padding-top: 28px;
+}
+
+.detail-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.detail-title-block {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.detail-title {
+  font-size: var(--fontSizeBase600);
+  line-height: var(--lineHeightBase600);
+  font-weight: var(--fontWeightSemibold);
+  overflow-wrap: anywhere;
+}
+
+.detail-badges:empty {
+  display: none;
+}
+
+.detail-badges {
+  display: flex;
+  gap: 4px;
+}
+
+.detail-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* Each field is a card on the slightly darker detail layer, like Windows 11 Settings. */
+.fields {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.field-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 16px;
+  background: var(--colorNeutralBackground1);
+  border: 1px solid var(--colorNeutralStroke2);
+  border-radius: var(--borderRadiusLarge);
+  box-shadow: var(--shadow2);
+}
+
+.field-label {
+  font-size: var(--fontSizeBase200);
+  color: var(--colorNeutralForeground3);
+  font-variant-caps: all-small-caps;
+  letter-spacing: 0.04em;
+  font-weight: var(--fontWeightSemibold);
+}
+
+.field-label-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.field-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+}
+
+.field-value {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fontSizeBase400);
+  line-height: var(--lineHeightBase400);
+  overflow-wrap: anywhere;
+}
+
+.field-value.mono {
+  font-family: var(--fontFamilyMonospace);
+  font-size: var(--fontSizeBase500);
+  line-height: var(--lineHeightBase500);
+}
+
+.field-value.multiline {
+  white-space: pre-wrap;
+}
+
+.secret.masked {
+  letter-spacing: 0.12em;
+  color: var(--colorNeutralForeground2);
+}
+
+.field-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.link {
+  color: var(--colorBrandForeground1);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.link:hover {
+  text-decoration: underline;
+}
+
+.notes-box {
+  background: var(--colorNeutralBackground3);
+  border-radius: var(--borderRadiusMedium);
+  padding: 8px 4px 8px 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.notes-box.mono {
+  font-family: var(--fontFamilyMonospace);
+}
+
+.note-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-height: 24px;
+  border-radius: var(--borderRadiusSmall);
+}
+
+.note-line:hover {
+  background: var(--colorSubtleBackgroundHover);
+}
+
+.note-text {
+  flex: 1;
+  min-width: 0;
+  padding-top: 2px;
+}
+
+.note-copy {
+  opacity: 0;
+  min-width: 0;
+  height: 24px;
+}
+
+.note-line:hover .note-copy,
+.note-copy:focus-visible {
+  opacity: 1;
+}
+
+.attachment-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 32px;
+}
+
+.attachment-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.modified {
+  margin-top: 32px;
+  font-size: var(--fontSizeBase200);
+}
+
+/* ---------- Dialogs and drawer ---------- */
+
+.dialog-title {
+  font-size: var(--fontSizeBase500);
+  line-height: var(--lineHeightBase500);
+  font-weight: var(--fontWeightSemibold);
+}
+
+.dialog-text {
+  overflow-wrap: anywhere;
+}
+
+.narrow-dialog::part(dialog) {
+  max-width: 420px;
+}
+
+/* Settings: Windows 11 Settings layout. Cards on the darker dialog layer, one row per setting. */
+.settings-dialog::part(dialog) {
+  max-width: 720px;
+  background: var(--colorNeutralBackground2);
+}
+
+/* The body paints its own white background; let the darker layer show behind the cards.
+   Title and buttons stay put while the settings scroll. */
+.settings-dialog fluent-dialog-body {
+  background: transparent;
+  height: calc(100vh - 48px);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.settings-dialog fluent-dialog-body::part(title),
+.settings-dialog fluent-dialog-body::part(actions) {
+  background: transparent;
+}
+
+.settings-dialog fluent-dialog-body::part(content) {
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.settings-body {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding-bottom: 4px;
+}
+
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.settings-section-title {
+  margin: 0;
+  font-size: var(--fontSizeBase300);
+  line-height: var(--lineHeightBase300);
+  font-weight: var(--fontWeightSemibold);
+  color: var(--colorNeutralForeground1);
+}
+
+.settings-card {
+  background: var(--colorNeutralBackground1);
+  border: 1px solid var(--colorNeutralStroke2);
+  border-radius: var(--borderRadiusLarge);
+  box-shadow: var(--shadow2);
+  overflow: hidden;
+}
+
+.setting-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 64px;
+  padding: 10px 16px;
+}
+
+.setting-row + .setting-row {
+  border-top: 1px solid var(--colorNeutralStroke2);
+}
+
+.setting-icon {
+  width: 24px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  color: var(--colorNeutralForeground2);
+}
+
+.setting-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.setting-title {
+  color: var(--colorNeutralForeground1);
+}
+
+.setting-desc {
+  font-size: var(--fontSizeBase200);
+  line-height: var(--lineHeightBase200);
+  color: var(--colorNeutralForeground3);
+  overflow-wrap: anywhere;
+}
+
+.setting-control {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.setting-control .hotkey-input {
+  width: 180px;
+}
+
+.setting-control .sequence-input {
+  width: 300px;
+}
+
+.setting-control .length-slider {
+  width: 200px;
+}
+
+.setting-control fluent-switch {
+  margin: 0;
+}
+
+.form-drawer {
+  --drawer-width: 600px;
+}
+
+.form-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-bottom: 8px;
+}
+
+.dup-slot:empty {
+  display: none;
+}
+
+.password-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.password-input::part(control) {
+  font-family: var(--fontFamilyMonospace);
+  font-size: var(--fontSizeBase500);
+  letter-spacing: 0.02em;
+}
+
+.password-input {
+  height: 40px;
+}
+
+.password-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.generator {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 12px;
+  border-radius: var(--borderRadiusMedium);
+  background: var(--colorNeutralBackground3);
+}
+
+.slider-line {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.generator-label {
+  color: var(--colorNeutralForeground2);
+  min-width: 48px;
+}
+
+.length-slider {
+  flex: 1;
+}
+
+.slider-value {
+  min-width: 32px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--fontWeightSemibold);
+}
+
+.checkbox-line {
+  display: flex;
+  gap: 24px;
+}
+
+.two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.form-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 8px;
+}
+
+.custom-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.custom-row {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr auto auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.align-start {
+  align-self: flex-start;
+}
+
+.drawer-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  width: 100%;
+}
+
+fluent-option.bin {
+  color: var(--colorNeutralForeground3);
+}
+
+/* ---------- Auto-Type chooser ---------- */
+
+.chooser-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 320px;
+  overflow: auto;
+  outline: none;
+}
+
+.chooser-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-radius: var(--borderRadiusMedium);
+}
+
+.chooser-row.selected {
+  background: var(--colorSubtleBackgroundSelected);
+}
+
+.chooser-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.chooser-db {
+  font-size: var(--fontSizeBase200);
+  flex-shrink: 0;
+}
+
+/* ---------- Toast ---------- */
+
+.toast {
+  position: fixed;
+  inset: auto 0 24px 0;
+  margin: 0 auto;
+  width: fit-content;
+  max-width: calc(100vw - 48px);
+  padding: 8px 20px;
+  border: none;
+  border-radius: var(--borderRadiusCircular);
+  background: var(--colorNeutralBackgroundInverted);
+  color: var(--colorNeutralForegroundInverted);
+  box-shadow: var(--shadow16);
+  font-size: var(--fontSizeBase300);
+  pointer-events: none;
+}
+
+.fatal {
+  padding: 32px;
+  color: var(--colorPaletteRedForeground1);
+}
+
+/* ---------- Busy bar (save or unlock still running after 250 ms) ---------- */
+
+html[data-busy] {
+  cursor: progress;
+}
+
+html[data-busy] body::after {
+  content: "";
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 30%;
+  height: 3px;
+  z-index: 10000;
+  border-radius: var(--borderRadiusCircular);
+  background: var(--colorBrandBackground);
+  pointer-events: none;
+  animation: busy-slide 1.1s ease-in-out infinite;
+}
+
+@keyframes busy-slide {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(340%);
+  }
+}
