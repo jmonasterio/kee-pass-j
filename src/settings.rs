@@ -30,6 +30,17 @@ pub struct RecentDb {
     pub keyfile: Option<PathBuf>,
 }
 
+/// What the letter tiles in the account list are coloured by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TileColors {
+    /// Each folder's colour (chosen by the user or picked automatically).
+    #[default]
+    Folder,
+    /// One neutral colour for every tile.
+    Off,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -40,6 +51,7 @@ pub struct Settings {
     pub autotype_default_sequence: String,
     pub generator: GenOptions,
     pub notes_monospace: bool,
+    pub tile_colors: TileColors,
 }
 
 impl Default for Settings {
@@ -51,6 +63,7 @@ impl Default for Settings {
             autotype_default_sequence: "{USERNAME}{TAB}{PASSWORD}{ENTER}".to_string(),
             generator: GenOptions::default(),
             notes_monospace: false,
+            tile_colors: TileColors::Folder,
         }
     }
 }

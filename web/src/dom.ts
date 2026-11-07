@@ -130,6 +130,7 @@ const ICONS: Record<string, Shape[]> = {
     ["path", "M10 10h7M14.75 10v2.5M17 10v2"],
   ],
   text: [["path", "M4.5 5.5h11M4.5 10h11M4.5 14.5h7"]],
+  warning: [["path", "M10 3.25 17.25 16H2.75z"], ["path", "M10 8v3.5M10 13.75h.01"]],
 };
 
 export type IconName = keyof typeof ICONS;

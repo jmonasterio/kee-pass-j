@@ -24,6 +24,8 @@ const RECYCLE_BIN_NAME: &str = "Recycle Bin";
 const RECYCLE_BIN_ICON: usize = 43;
 const DEFAULT_HISTORY_MAX_ITEMS: usize = 10;
 const BACKUP_EXT: &str = "kdbx";
+/// Group custom-data key for the folder colour shown in Our Logins; stored in the file.
+const GROUP_COLOR_KEY: &str = "OurLogins.Color";
 
 /// Fields with a dedicated slot in `EntryView`; everything else is a custom field.
 const RESERVED_FIELDS: [&str; 9] = [
@@ -134,6 +136,8 @@ pub struct GroupView {
     pub name: String,
     pub depth: usize,
     pub is_recycle_bin: bool,
+    /// Colour name chosen by the user (`OurLogins.Color` group custom data); `None` = automatic.
+    pub color: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -572,6 +576,10 @@ impl Vault {
                 name: g.name.clone(),
                 depth,
                 is_recycle_bin: Some(g.id()) == bin,
+                color: match g.custom_data.get(GROUP_COLOR_KEY).and_then(|c| c.value.as_ref()) {
+                    Some(db::CustomDataValue::String(s)) if !s.is_empty() => Some(s.clone()),
+                    _ => None,
+                },
             });
             let children: Vec<db::GroupId> = g.group_ids().collect();
             for child in children.into_iter().rev() {
@@ -601,6 +609,39 @@ impl Vault {
             .collect();
         sort_views(&mut views);
         views
+    }
+
+    /// Every entry in the recycle bin, including inside deleted groups; stale last, then title A-Z.
+    pub fn recycle_bin_entries(&self) -> Vec<EntryView> {
+        let mut views: Vec<EntryView> = self
+            .db
+            .iter_all_entries()
+            .filter(|e| self.in_recycle_bin(e.parent().id()))
+            .map(|e| entry_view(&e))
+            .collect();
+        sort_views(&mut views);
+        views
+    }
+
+    /// Sets or clears (`None`) the group's colour, kept in the file so it travels with the database.
+    pub fn set_group_color(&mut self, id: GroupId, color: Option<&str>) -> Result<(), VaultError> {
+        let mut g = self.db.group_mut(id.into()).ok_or(VaultError::GroupNotFound(id))?;
+        match color {
+            Some(c) => {
+                g.custom_data.insert(
+                    GROUP_COLOR_KEY.to_owned(),
+                    db::CustomDataItem {
+                        value: Some(db::CustomDataValue::String(c.to_owned())),
+                        last_modification_time: Some(Times::now()),
+                    },
+                );
+            }
+            None => {
+                g.custom_data.remove(GROUP_COLOR_KEY);
+            }
+        }
+        self.dirty = true;
+        Ok(())
     }
 
     /// Case-insensitive substring match over title, username, URL, notes and tags. Every
@@ -1358,6 +1399,34 @@ mod tests {
         let bins: Vec<_> = v.groups().into_iter().filter(|g| g.is_recycle_bin).collect();
         assert_eq!(bins.len(), 1);
         assert_eq!(v.entry(id2).unwrap().group, bins[0].id);
+    }
+
+    #[test]
+    fn group_color_survives_save_and_bin_entries_include_deleted_groups() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("c.kdbx");
+        let mut v = Vault::create(&path, PW).unwrap();
+        let root = v.root();
+        let bank = v.add_group(root, "Banking").unwrap();
+        v.set_group_color(bank, Some("green")).unwrap();
+        let a = v.upsert_entry(edit(bank, "A")).unwrap();
+        let b = v.upsert_entry(edit(root, "B")).unwrap();
+        v.save(&policy(tmp.path())).unwrap();
+
+        let mut v = Vault::open(&path, PW, None).unwrap();
+        let color = |v: &Vault| v.groups().into_iter().find(|g| g.id == bank).unwrap().color;
+        assert_eq!(color(&v).as_deref(), Some("green"));
+        v.set_group_color(bank, None).unwrap();
+        assert_eq!(color(&v), None);
+
+        v.delete_entry(b).unwrap();
+        v.delete_group(bank).unwrap();
+        let mut in_bin: Vec<_> = v.recycle_bin_entries().into_iter().map(|e| e.id).collect();
+        in_bin.sort_by_key(|id| id.0);
+        let mut expected = vec![a, b];
+        expected.sort_by_key(|id| id.0);
+        assert_eq!(in_bin, expected, "entries of a deleted group count as in the bin");
+        assert!(v.all_entries().is_empty());
     }
 
     #[test]

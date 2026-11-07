@@ -14,10 +14,13 @@ use ourlogins::settings;
 use ourlogins::vault::{self, CustomField, EntryEdit, EntryView, Vault};
 
 use crate::dto::*;
-use crate::state::{in_bin, ordered_groups, parse_entry_id, parse_group_id, AppState, OpenDb, Shared};
+use crate::state::{filter_shows, folders, ordered_groups, parse_entry_id, parse_filter, parse_group_id, AppState, Filter, OpenDb, Shared};
 use crate::typing;
 
 type R<T> = Result<T, String>;
+
+/// Folder colours the user can pick; the frontend maps each name to a light and a dark shade.
+const FOLDER_COLORS: [&str; 10] = ["red", "orange", "yellow", "lime", "green", "teal", "cyan", "blue", "purple", "pink"];
 
 pub struct Platform {
     pub backdrop: bool,
@@ -69,10 +72,9 @@ fn open_external(target: &str) -> std::io::Result<()> {
 
 fn add_open_db(app: &AppHandle, st: &mut AppState, vault: Vault, keyfile: Option<PathBuf>) -> MainView {
     let path = vault.path().to_path_buf();
-    let root = vault.root();
     st.dbs.push(OpenDb {
         vault,
-        selected_group: Some(root),
+        filter: Filter::All,
         selected_entry: None,
     });
     st.active_tab = st.dbs.len() - 1;
@@ -325,28 +327,43 @@ pub async fn lock_tab(state: State<'_, Shared>, index: usize) -> R<MainView> {
 }
 
 #[tauri::command]
-pub async fn select_group(state: State<'_, Shared>, id: String) -> R<MainView> {
-    let gid = parse_group_id(&id)?;
+pub async fn select_filter(state: State<'_, Shared>, filter: FilterDto) -> R<MainView> {
+    let filter = parse_filter(&filter)?;
     let mut st = state.lock();
-    st.active_or_err()?.selected_group = Some(gid);
+    st.active_or_err()?.filter = filter;
     st.search.clear();
     Ok(st.main_view())
 }
 
+/// Adds a folder inside `parent`, or at the top level when `parent` is `None`, and shows it.
 #[tauri::command]
-pub async fn add_group(state: State<'_, Shared>, parent: String, name: String) -> R<MainView> {
+pub async fn add_group(state: State<'_, Shared>, parent: Option<String>, name: String) -> R<MainView> {
     let name = name.trim().to_string();
     if name.is_empty() {
-        return Err("Give the group a name.".into());
+        return Err("Give the folder a name.".into());
     }
-    let parent = parse_group_id(&parent)?;
+    let parent = parent.as_deref().map(parse_group_id).transpose()?;
     let mut st = state.lock();
-    mutate(&mut st, "Could not add the group", |db| {
-        let parent = if db.vault.groups().iter().any(|g| g.id == parent) { parent } else { db.vault.root() };
+    mutate(&mut st, "Could not add the folder", |db| {
+        let groups = ordered_groups(&db.vault);
+        let parent = parent.filter(|p| folders(&groups).iter().any(|f| f.id == *p)).unwrap_or(db.vault.root());
         let id = db.vault.add_group(parent, &name)?;
-        db.selected_group = Some(id);
+        db.filter = Filter::Group(id);
         Ok(())
     })
+}
+
+/// Sets a folder's colour (one of `FOLDER_COLORS`), or back to automatic with `None`.
+#[tauri::command]
+pub async fn set_group_color(state: State<'_, Shared>, id: String, color: Option<String>) -> R<MainView> {
+    let gid = parse_group_id(&id)?;
+    if let Some(c) = color.as_deref() {
+        if !FOLDER_COLORS.contains(&c) {
+            return Err(format!("Unknown colour {c}."));
+        }
+    }
+    let mut st = state.lock();
+    mutate(&mut st, "Could not change the colour", |db| db.vault.set_group_color(gid, color.as_deref()))
 }
 
 #[tauri::command]
@@ -382,8 +399,8 @@ pub async fn delete_entry(state: State<'_, Shared>) -> R<MainView> {
     })
 }
 
-/// Moves a group with everything in it to the Recycle Bin, or deletes it for good when it is
-/// already there (frontend confirms first). Selection moves to the group's parent.
+/// Moves a folder with everything in it to the Recycle Bin, or deletes it for good when it is
+/// already there (frontend confirms first). A filter on the deleted folder moves to its parent.
 #[tauri::command]
 pub async fn delete_group(state: State<'_, Shared>, id: String) -> R<MainView> {
     let gid = parse_group_id(&id)?;
@@ -391,7 +408,24 @@ pub async fn delete_group(state: State<'_, Shared>, id: String) -> R<MainView> {
     mutate(&mut st, "Could not delete the group", |db| {
         let parent = db.vault.groups().into_iter().find(|g| g.id == gid).and_then(|g| g.parent);
         db.vault.delete_group(gid)?;
-        db.selected_group = parent;
+        if db.filter == Filter::Group(gid) {
+            db.filter = match parent {
+                Some(p) if p != db.vault.root() => Filter::Group(p),
+                _ => Filter::All,
+            };
+        }
+        Ok(())
+    })
+}
+
+/// Deletes everything in the Recycle Bin for good (frontend confirms first).
+#[tauri::command]
+pub async fn empty_recycle_bin(state: State<'_, Shared>) -> R<MainView> {
+    let mut st = state.lock();
+    mutate(&mut st, "Could not empty the Recycle Bin", |db| {
+        if let Some(bin) = db.vault.groups().into_iter().find(|g| g.is_recycle_bin) {
+            db.vault.delete_group(bin.id)?;
+        }
         Ok(())
     })
 }
@@ -483,17 +517,17 @@ pub async fn form_open(state: State<'_, Shared>, mode: String) -> R<FormData> {
         .iter()
         .map(|g| FormGroup {
             id: g.id.to_string(),
-            name: g.name.clone(),
+            name: if g.depth == 0 { "No folder".to_string() } else { g.name.clone() },
             depth: g.depth,
             is_recycle_bin: g.is_recycle_bin,
         })
         .collect();
     let entry = match mode.as_str() {
         "add" => {
-            let group = db
-                .selected_group
-                .filter(|g| groups.iter().any(|v| v.id == *g) && !in_bin(&groups, *g))
-                .unwrap_or(db.vault.root());
+            let group = match db.filter {
+                Filter::Group(g) => g,
+                _ => db.vault.root(),
+            };
             EntryForm {
                 id: None,
                 group: group.to_string(),
@@ -619,7 +653,13 @@ pub async fn form_save(state: State<'_, Shared>, entry: EntryForm, replace: Opti
         })
         .map_err(|e| format!("Could not save the account: {e}"))?;
     db.selected_entry = Some(new_id);
-    db.selected_group = Some(group);
+    // Keep the current list if the saved account shows in it; otherwise show its folder.
+    let groups = ordered_groups(&db.vault);
+    if let Some(saved) = db.vault.entry(new_id) {
+        if !filter_shows(db.filter, &groups, &saved) {
+            db.filter = if saved.group == db.vault.root() { Filter::All } else { Filter::Group(saved.group) };
+        }
+    }
     st.search.clear();
     st.save_active();
     Ok(st.main_view())
@@ -638,6 +678,7 @@ pub async fn settings_get(state: State<'_, Shared>) -> R<SettingsView> {
         autotype_default_sequence: s.autotype_default_sequence.clone(),
         reopen_last: s.reopen_last,
         notes_monospace: s.notes_monospace,
+        tile_colors: s.tile_colors,
         generator: GeneratorSettings {
             length: s.generator.length,
             digits: s.generator.digits,
@@ -662,6 +703,7 @@ pub async fn settings_save(app: AppHandle, state: State<'_, Shared>, settings: S
         s.autotype_default_sequence = sequence;
         s.reopen_last = settings.reopen_last;
         s.notes_monospace = settings.notes_monospace;
+        s.tile_colors = settings.tile_colors;
         let g = settings.generator;
         s.generator = GenOptions {
             length: g.length.clamp(4, 128),

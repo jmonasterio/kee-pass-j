@@ -8,9 +8,18 @@ use ourlogins::vault::{EntryId, EntryView, GroupId, GroupView, Vault};
 
 use crate::dto::*;
 
+/// What the account list shows when the search box is empty.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Filter {
+    All,
+    NotWorking,
+    RecycleBin,
+    Group(GroupId),
+}
+
 pub struct OpenDb {
     pub vault: Vault,
-    pub selected_group: Option<GroupId>,
+    pub filter: Filter,
     pub selected_entry: Option<EntryId>,
 }
 
@@ -126,10 +135,13 @@ impl AppState {
         }
     }
 
-    /// Builds the whole main page; also repairs selections that no longer exist.
+    /// Builds the whole main page. Repairs state as it goes: a folder filter whose folder is gone
+    /// falls back to All, and the selected account is dropped when it is not in the list shown,
+    /// so the details always belong to a visible row.
     pub fn main_view(&mut self) -> MainView {
         let search = self.search.trim().to_string();
         let notes_monospace = self.settings.notes_monospace;
+        let tile_colors = self.settings.tile_colors;
         let save_error = self.save_error.as_ref().map(|(_, e)| e.clone());
         let tabs = self
             .dbs
@@ -145,8 +157,9 @@ impl AppState {
             return MainView {
                 tabs,
                 active_tab,
-                groups: Vec::new(),
-                selected_group: None,
+                folders: Vec::new(),
+                filter: FilterDto::All,
+                counts: Counts { all: 0, not_working: 0, recycle_bin: 0 },
                 search,
                 entries: Vec::new(),
                 selected_entry: None,
@@ -154,44 +167,62 @@ impl AppState {
                 save_error,
                 notes_monospace,
                 recycle_bin_enabled: true,
+                tile_colors,
             };
         };
 
         let groups = ordered_groups(&db.vault);
-        if db.selected_group.is_none_or(|sel| !groups.iter().any(|g| g.id == sel)) {
-            db.selected_group = Some(db.vault.root());
+        let folders = folders(&groups);
+        if let Filter::Group(g) = db.filter {
+            if !folders.iter().any(|f| f.id == g) {
+                db.filter = Filter::All;
+            }
         }
-        let mut list = if search.is_empty() {
-            db.selected_group.map(|g| db.vault.entries_in(g)).unwrap_or_default()
-        } else {
+
+        let all = db.vault.all_entries();
+        let bin = db.vault.recycle_bin_entries();
+        let counts = Counts {
+            all: all.len(),
+            not_working: all.iter().filter(|e| e.stale).count(),
+            recycle_bin: bin.len(),
+        };
+        let mut list = if !search.is_empty() {
             db.vault.search(&search)
+        } else {
+            match db.filter {
+                Filter::All => all,
+                Filter::NotWorking => all.into_iter().filter(|e| e.stale).collect(),
+                Filter::RecycleBin => bin,
+                Filter::Group(g) => db.vault.entries_in(g),
+            }
         };
         // The vault already orders stale entries last; keep that invariant here too.
         list.sort_by_key(|e| e.stale);
 
-        let detail = db
-            .selected_entry
-            .and_then(|id| db.vault.entry(id))
-            .map(|e| entry_detail(&e, &groups));
-        if detail.is_none() {
+        if db.selected_entry.is_some_and(|id| !list.iter().any(|e| e.id == id)) {
             db.selected_entry = None;
         }
+        let detail = db
+            .selected_entry
+            .and_then(|id| list.iter().find(|e| e.id == id))
+            .map(|e| entry_detail(e, &groups, &folders));
 
         MainView {
             tabs,
             active_tab,
-            groups: groups
+            folders: folders
                 .iter()
                 .map(|g| GroupItem {
                     id: g.id.to_string(),
                     parent: g.parent.map(|p| p.to_string()),
                     name: g.name.clone(),
-                    depth: g.depth,
-                    is_recycle_bin: g.is_recycle_bin,
+                    depth: g.depth - 1,
                     entry_count: db.vault.entry_count(g.id),
+                    color: g.color.clone(),
                 })
                 .collect(),
-            selected_group: db.selected_group.map(|g| g.to_string()),
+            filter: filter_dto(db.filter),
+            counts,
             search,
             entries: list
                 .iter()
@@ -201,6 +232,7 @@ impl AppState {
                     username: e.username.clone(),
                     url: e.url.clone(),
                     stale: e.stale,
+                    folder: folders.iter().any(|f| f.id == e.group).then(|| e.group.to_string()),
                 })
                 .collect(),
             selected_entry: db.selected_entry.map(|e| e.to_string()),
@@ -208,6 +240,7 @@ impl AppState {
             save_error,
             notes_monospace,
             recycle_bin_enabled: db.vault.recycle_bin_enabled(),
+            tile_colors,
         }
     }
 }
@@ -249,7 +282,61 @@ pub fn in_bin(groups: &[GroupView], group: GroupId) -> bool {
     groups[start..].iter().any(|g| g.id == group)
 }
 
-fn entry_detail(e: &EntryView, groups: &[GroupView]) -> EntryDetail {
+/// The folders shown in the sidebar: every group except the root and the Recycle Bin subtree,
+/// in tree order.
+pub fn folders(groups: &[GroupView]) -> Vec<GroupView> {
+    groups
+        .iter()
+        .filter(|g| g.depth > 0 && !in_bin(groups, g.id))
+        .cloned()
+        .collect()
+}
+
+/// Whether the list for `filter` (with an empty search box) contains this entry.
+pub fn filter_shows(filter: Filter, groups: &[GroupView], e: &EntryView) -> bool {
+    let binned = in_bin(groups, e.group);
+    match filter {
+        Filter::All => !binned,
+        Filter::NotWorking => e.stale && !binned,
+        Filter::RecycleBin => binned,
+        Filter::Group(g) => e.group == g,
+    }
+}
+
+pub fn filter_dto(f: Filter) -> FilterDto {
+    match f {
+        Filter::All => FilterDto::All,
+        Filter::NotWorking => FilterDto::NotWorking,
+        Filter::RecycleBin => FilterDto::RecycleBin,
+        Filter::Group(g) => FilterDto::Group { id: g.to_string() },
+    }
+}
+
+pub fn parse_filter(f: &FilterDto) -> Result<Filter, String> {
+    Ok(match f {
+        FilterDto::All => Filter::All,
+        FilterDto::NotWorking => Filter::NotWorking,
+        FilterDto::RecycleBin => Filter::RecycleBin,
+        FilterDto::Group { id } => Filter::Group(parse_group_id(id)?),
+    })
+}
+
+/// "Email › Work" for an entry in a nested folder; `None` for the root or the Recycle Bin.
+fn folder_path(groups: &[GroupView], folders: &[GroupView], group: GroupId) -> Option<String> {
+    let mut names = Vec::new();
+    let mut cur = folders.iter().find(|f| f.id == group);
+    while let Some(f) = cur {
+        names.push(f.name.as_str());
+        cur = f.parent.and_then(|p| folders.iter().find(|g| g.id == p));
+    }
+    if names.is_empty() {
+        return in_bin(groups, group).then(|| "Recycle Bin".to_string());
+    }
+    names.reverse();
+    Some(names.join(" › "))
+}
+
+fn entry_detail(e: &EntryView, groups: &[GroupView], folders: &[GroupView]) -> EntryDetail {
     EntryDetail {
         id: e.id.to_string(),
         title: e.title.clone(),
@@ -259,6 +346,8 @@ fn entry_detail(e: &EntryView, groups: &[GroupView]) -> EntryDetail {
         tags: e.tags.clone(),
         stale: e.stale,
         in_bin: in_bin(groups, e.group),
+        folder: folders.iter().any(|f| f.id == e.group).then(|| e.group.to_string()),
+        folder_path: folder_path(groups, folders, e.group),
         modified: e
             .modified
             .with_timezone(&chrono::Local)

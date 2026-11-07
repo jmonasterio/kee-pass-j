@@ -62,14 +62,27 @@ export interface TabItem {
   path: string;
   dirty: boolean;
 }
+/** A folder in the sidebar: every group except the root and the Recycle Bin subtree. */
 export interface GroupItem {
   id: Id;
   parent: Id | null;
   name: string;
+  /** 0 for top-level folders. */
   depth: number;
-  isRecycleBin: boolean;
-  /** Entries directly in this group. */
+  /** Entries directly in this folder. */
   entryCount: number;
+  /** Colour the user picked; null = automatic. */
+  color: FolderColor | null;
+}
+export const FOLDER_COLORS = ["red", "orange", "yellow", "lime", "green", "teal", "cyan", "blue", "purple", "pink"] as const;
+export type FolderColor = (typeof FOLDER_COLORS)[number];
+export type TileColors = "folder" | "off";
+
+export type Filter = { kind: "all" } | { kind: "notWorking" } | { kind: "recycleBin" } | { kind: "group"; id: Id };
+export interface Counts {
+  all: number;
+  notWorking: number;
+  recycleBin: number;
 }
 export interface EntrySummary {
   id: Id;
@@ -77,6 +90,8 @@ export interface EntrySummary {
   username: string;
   url: string;
   stale: boolean;
+  /** Folder id; null in the root or the Recycle Bin. */
+  folder: Id | null;
 }
 export interface CustomFieldView {
   key: string;
@@ -92,6 +107,9 @@ export interface EntryDetail {
   tags: string[];
   stale: boolean;
   inBin: boolean;
+  folder: Id | null;
+  /** "Email › Work"; "Recycle Bin" for deleted entries; null in the root. */
+  folderPath: string | null;
   modified: string;
   hasPassword: boolean;
   hasRecoveryPin: boolean;
@@ -103,8 +121,9 @@ export interface EntryDetail {
 export interface MainView {
   tabs: TabItem[];
   activeTab: number;
-  groups: GroupItem[];
-  selectedGroup: Id | null;
+  folders: GroupItem[];
+  filter: Filter;
+  counts: Counts;
   search: string;
   entries: EntrySummary[];
   selectedEntry: Id | null;
@@ -113,6 +132,7 @@ export interface MainView {
   notesMonospace: boolean;
   /** False when the database has its recycle bin turned off: every delete is permanent. */
   recycleBinEnabled: boolean;
+  tileColors: TileColors;
 }
 
 export type FieldName =
@@ -180,6 +200,7 @@ export interface SettingsView {
   autotypeDefaultSequence: string;
   reopenLast: boolean;
   notesMonospace: boolean;
+  tileColors: TileColors;
   generator: GeneratorSettings;
   backupDir: string;
 }
@@ -213,13 +234,15 @@ export const api = {
   mainView: () => invoke<MainView>("main_view"),
   selectTab: (index: number) => invoke<MainView>("select_tab", { index }),
   lockTab: (index: number) => invoke<MainView>("lock_tab", { index }),
-  selectGroup: (id: Id) => invoke<MainView>("select_group", { id }),
-  addGroup: (parent: Id, name: string) => invoke<MainView>("add_group", { parent, name }),
+  selectFilter: (filter: Filter) => invoke<MainView>("select_filter", { filter }),
+  addGroup: (parent: Id | null, name: string) => invoke<MainView>("add_group", { parent, name }),
+  setGroupColor: (id: Id, color: FolderColor | null) => invoke<MainView>("set_group_color", { id, color }),
   selectEntry: (id: Id) => invoke<MainView>("select_entry", { id }),
   search: (text: string) => invoke<MainView>("search", { text }),
   toggleStale: () => invoke<MainView>("toggle_stale"),
   deleteEntry: () => invoke<MainView>("delete_entry"),
   deleteGroup: (id: Id) => invoke<MainView>("delete_group", { id }),
+  emptyRecycleBin: () => invoke<MainView>("empty_recycle_bin"),
   addAttachment: () => invoke<MainView>("add_attachment"),
   saveAttachment: (name: string) => invoke<string | null>("save_attachment", { name }),
   removeAttachment: (name: string) => invoke<MainView>("remove_attachment", { name }),

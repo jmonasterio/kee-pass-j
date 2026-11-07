@@ -1,5 +1,17 @@
-import { api, errorText, type EntryDetail, type EntrySummary, type FieldName, type GroupItem, type MainView } from "../api";
-import { confirmDialog, isOverlayOpen, promptDialog } from "../dialogs";
+import {
+  api,
+  errorText,
+  FOLDER_COLORS,
+  type EntryDetail,
+  type EntrySummary,
+  type FieldName,
+  type Filter,
+  type FolderColor,
+  type GroupItem,
+  type Id,
+  type MainView,
+} from "../api";
+import { confirmDialog, isOverlayOpen, openDialog, promptDialog } from "../dialogs";
 import { button, el, icon, setChildren, type Child } from "../dom";
 import { nav } from "../nav";
 import { toast } from "../toast";
@@ -122,73 +134,82 @@ function renderBanner(v: MainView): void {
   setChildren(banner, el("fluent-message-bar", { intent: "error", layout: "multiline" }, v.saveError, retry));
 }
 
+function sameFilter(a: Filter, b: Filter): boolean {
+  return a.kind === b.kind && (a.kind !== "group" || (b.kind === "group" && a.id === b.id));
+}
+
+function navRow(opts: {
+  label: string;
+  count?: number;
+  selected: boolean;
+  onSelect: () => void;
+  lead?: Child;
+  depth?: number;
+  actions?: Child;
+  extraClass?: string;
+  title?: string;
+}): HTMLElement {
+  const select = () => {
+    if (!opts.selected) opts.onSelect();
+  };
+  return el(
+    "div",
+    {
+      class: "nav-row" + (opts.selected ? " selected" : "") + (opts.extraClass ? " " + opts.extraClass : ""),
+      style: opts.depth ? { "--depth": String(opts.depth) } : undefined,
+      attrs: { role: "button", tabindex: "0", "aria-current": opts.selected ? "true" : undefined, title: opts.title },
+      on: {
+        click: select,
+        keydown: (event: KeyboardEvent) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            select();
+          }
+        },
+      },
+    },
+    opts.lead ?? null,
+    el("span", { class: "nav-text" }, opts.label),
+    opts.count !== undefined && opts.count > 0 ? el("span", { class: "nav-count" }, String(opts.count)) : null,
+    opts.actions ?? null,
+  );
+}
+
 function renderSidebar(v: MainView): void {
   const tabs = v.tabs.map((tab, index) =>
-    el(
-      "div",
-      {
-        class: "nav-row tab-row" + (index === v.activeTab ? " selected" : ""),
-        attrs: { role: "button", tabindex: "0", "aria-current": index === v.activeTab ? "true" : undefined, title: tab.path },
-        on: {
-          click: () => {
-            if (index !== v.activeTab) void run(api.selectTab(index));
+    navRow({
+      label: tab.name,
+      selected: index === v.activeTab,
+      onSelect: () => void run(api.selectTab(index)),
+      title: tab.path,
+      extraClass: "tab-row",
+      actions: [
+        tab.dirty ? el("span", { class: "dirty-dot", attrs: { title: "Not saved" } }) : null,
+        button(
+          null,
+          (event) => {
+            event.stopPropagation();
+            void lockTab(index);
           },
-          keydown: (event: KeyboardEvent) => {
-            if (event.key === "Enter" || event.key === " ") {
-              event.preventDefault();
-              if (index !== v.activeTab) void run(api.selectTab(index));
-            }
-          },
-        },
-      },
-      el("span", { class: "nav-text" }, tab.name),
-      tab.dirty ? el("span", { class: "dirty-dot", attrs: { title: "Not saved" } }) : null,
-      button(
-        null,
-        (event) => {
-          event.stopPropagation();
-          void lockTab(index);
-        },
-        { icon: "lock", appearance: "transparent", size: "small", title: `Lock ${tab.name}`, class: "row-action" },
-      ),
-    ),
+          { icon: "lock", appearance: "transparent", size: "small", title: `Lock ${tab.name}`, class: "row-action" },
+        ),
+      ],
+    }),
   );
 
-  const groups = v.groups.map((group) =>
-    el(
-      "div",
-      {
-        class: "nav-row group-row" + (group.id === v.selectedGroup ? " selected" : "") + (group.isRecycleBin ? " bin" : ""),
-        style: { "--depth": String(group.depth) },
-        attrs: { role: "treeitem", tabindex: "0", "aria-selected": String(group.id === v.selectedGroup), "aria-level": group.depth + 1 },
-        on: {
-          click: () => void run(api.selectGroup(group.id)),
-          keydown: (event: KeyboardEvent) => {
-            if (event.key === "Enter" || event.key === " ") {
-              event.preventDefault();
-              void run(api.selectGroup(group.id));
-            }
-          },
-        },
-      },
-      el("span", { class: "nav-text" }, group.name),
-      group.depth > 0
-        ? button(
-            null,
-            (event) => {
-              event.stopPropagation();
-              void deleteGroup(v, group);
-            },
-            {
-              icon: "delete",
-              appearance: "transparent",
-              size: "small",
-              title: group.isRecycleBin ? "Empty Recycle Bin" : `Delete ${group.name}`,
-              class: "row-action",
-            },
-          )
-        : null,
-    ),
+  const show = (filter: Filter) => () => void run(api.selectFilter(filter));
+  const colorsOn = v.tileColors === "folder";
+  const folders = v.folders.map((f) =>
+    navRow({
+      label: f.name,
+      count: f.entryCount,
+      depth: f.depth,
+      selected: sameFilter(v.filter, { kind: "group", id: f.id }),
+      onSelect: show({ kind: "group", id: f.id }),
+      lead: colorsOn ? el("span", { class: "folder-dot", style: { "--hue": String(COLOR_HUES[folderColor(f)]) } }) : icon("folder"),
+      extraClass: "folder-row",
+      actions: folderMenu(v, f),
+    }),
   );
 
   setChildren(
@@ -196,14 +217,130 @@ function renderSidebar(v: MainView): void {
     el("div", { class: "section-head" }, el("span", null, "Databases")),
     el("div", { class: "nav-list", attrs: { role: "list" } }, tabs),
     button("Open…", () => void showUnlockPage(), { icon: "add", appearance: "subtle", class: "nav-button" }),
+    el("div", { class: "section-gap" }),
+    el(
+      "div",
+      { class: "nav-list", attrs: { role: "list", "aria-label": "Show" } },
+      navRow({
+        label: "All accounts",
+        count: v.counts.all,
+        selected: v.filter.kind === "all",
+        onSelect: show({ kind: "all" }),
+        lead: icon("key"),
+      }),
+      v.counts.notWorking > 0 || v.filter.kind === "notWorking"
+        ? navRow({
+            label: "Not working",
+            count: v.counts.notWorking,
+            selected: v.filter.kind === "notWorking",
+            onSelect: show({ kind: "notWorking" }),
+            lead: icon("warning"),
+          })
+        : null,
+    ),
     el(
       "div",
       { class: "section-head" },
-      el("span", null, "Groups"),
-      button(null, () => addGroup(v), { icon: "add", appearance: "transparent", size: "small", title: "Add group" }),
+      el("span", null, "Folders"),
+      button(null, () => addGroup(v), { icon: "add", appearance: "transparent", size: "small", title: "New folder" }),
     ),
-    el("div", { class: "nav-list", attrs: { role: "tree", "aria-label": "Groups" } }, groups),
+    v.folders.length === 0
+      ? el("div", { class: "nav-empty" }, "No folders yet.")
+      : el("div", { class: "nav-list", attrs: { role: "list", "aria-label": "Folders" } }, folders),
+    el("div", { class: "section-gap" }),
+    el(
+      "div",
+      { class: "nav-list", attrs: { role: "list" } },
+      navRow({
+        label: "Recycle Bin",
+        count: v.counts.recycleBin,
+        selected: v.filter.kind === "recycleBin",
+        onSelect: show({ kind: "recycleBin" }),
+        lead: icon("delete"),
+        extraClass: "bin-row",
+        actions:
+          v.counts.recycleBin > 0
+            ? button(
+                null,
+                (event) => {
+                  event.stopPropagation();
+                  void emptyRecycleBin(v);
+                },
+                { icon: "dismiss", appearance: "transparent", size: "small", title: "Empty Recycle Bin", class: "row-action" },
+              )
+            : null,
+      }),
+    ),
   );
+}
+
+function folderMenu(v: MainView, f: GroupItem): HTMLElement {
+  const trigger = button(null, (event) => event.stopPropagation(), { icon: "more", appearance: "transparent", size: "small", title: `${f.name} options` });
+  trigger.setAttribute("slot", "trigger");
+  return el(
+    "fluent-menu",
+    { class: "row-action", on: { click: (event: MouseEvent) => event.stopPropagation() } },
+    trigger,
+    el(
+      "fluent-menu-list",
+      null,
+      el("fluent-menu-item", { on: { click: () => pickColor(f) } }, "Colour…"),
+      el("fluent-menu-item", { on: { click: () => addGroup(v, f) } }, "New folder inside"),
+      el("fluent-menu-item", { class: "danger-item", on: { click: () => void deleteGroup(v, f) } }, "Delete folder…"),
+    ),
+  );
+}
+
+/** Hue for each folder colour name; the CSS turns a hue into light/dark tile shades. */
+const COLOR_HUES: Record<FolderColor, number> = {
+  red: 4,
+  orange: 28,
+  yellow: 48,
+  lime: 96,
+  green: 150,
+  teal: 178,
+  cyan: 196,
+  blue: 220,
+  purple: 266,
+  pink: 320,
+};
+
+/** The user's pick, or one derived from the folder id so it never changes on its own. */
+function folderColor(f: GroupItem): FolderColor {
+  if (f.color) return f.color;
+  let hash = 0;
+  for (const ch of f.id) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+  return FOLDER_COLORS[hash % FOLDER_COLORS.length];
+}
+
+function pickColor(f: GroupItem): void {
+  const current = folderColor(f);
+  const swatch = (color: FolderColor) =>
+    el(
+      "button",
+      {
+        class: "swatch" + (color === current ? " selected" : ""),
+        style: { "--hue": String(COLOR_HUES[color]) },
+        attrs: { type: "button", title: color, "aria-label": color, "aria-pressed": String(color === current) },
+        on: { click: () => void choose(color) },
+      },
+    );
+  const choose = async (color: FolderColor | null) => {
+    handle.close();
+    await run(api.setGroupColor(f.id, color));
+  };
+  const body = el(
+    "div",
+    { class: "color-picker" },
+    el("div", { class: "swatches" }, FOLDER_COLORS.map(swatch)),
+    el("div", { class: "muted small" }, f.color ? "" : "This folder uses an automatic colour."),
+  );
+  const handle = openDialog({
+    title: `Colour for ${f.name}`,
+    class: "narrow-dialog",
+    body,
+    actions: [button("Automatic", () => void choose(null), { appearance: "subtle" }), button("Cancel", () => handle.close())],
+  });
 }
 
 async function showUnlockPage(): Promise<void> {
@@ -235,19 +372,19 @@ async function lockTab(index: number): Promise<void> {
   }
 }
 
-function addGroup(v: MainView): void {
-  const parent = v.groups.find((g) => g.id === v.selectedGroup) ?? v.groups[0];
-  if (!parent) return;
+/** New folder inside `parent`, or inside the folder being shown, or at the top level. */
+function addGroup(v: MainView, parent?: GroupItem): void {
+  const inside = parent ?? (v.filter.kind === "group" ? v.folders.find((f) => sameFilter(v.filter, { kind: "group", id: f.id })) : undefined);
   promptDialog({
-    title: "New group",
-    subtitle: `Inside ${parent.name}`,
+    title: "New folder",
+    subtitle: inside ? `Inside ${inside.name}` : undefined,
     label: "Name",
-    placeholder: "Group name",
-    confirm: "Add group",
+    placeholder: "Folder name",
+    confirm: "Add folder",
     submit: async (name) => {
-      if (!name) return "Give the group a name first.";
+      if (!name) return "Give the folder a name first.";
       try {
-        nav.main(await api.addGroup(parent.id, name));
+        nav.main(await api.addGroup(inside?.id ?? null, name));
         return null;
       } catch (err) {
         return errorText(err);
@@ -260,72 +397,76 @@ function plural(n: number, word: string): string {
   return `${n} ${word}${n === 1 ? "" : "s"}`;
 }
 
-/** True when `group` is the Recycle Bin or lies inside it. */
-function inRecycleBin(v: MainView, group: GroupItem): boolean {
-  const byId = new Map(v.groups.map((g) => [g.id, g]));
-  for (let g: GroupItem | undefined = group; g; g = g.parent ? byId.get(g.parent) : undefined) {
-    if (g.isRecycleBin) return true;
-  }
-  return false;
-}
-
 async function deleteGroup(v: MainView, group: GroupItem): Promise<void> {
-  // `groups` is pre-order, so the subtree is the run of deeper groups right after this one.
-  const start = v.groups.indexOf(group);
+  // `folders` is pre-order, so the subtree is the run of deeper folders right after this one.
+  const start = v.folders.indexOf(group);
   let end = start + 1;
-  while (end < v.groups.length && v.groups[end].depth > group.depth) end++;
-  const subtree = v.groups.slice(start, end);
+  while (end < v.folders.length && v.folders[end].depth > group.depth) end++;
+  const subtree = v.folders.slice(start, end);
   const accounts = subtree.reduce((sum, g) => sum + g.entryCount, 0);
-  const parts = [accounts ? plural(accounts, "account") : "", subtree.length > 1 ? plural(subtree.length - 1, "group") : ""];
+  const parts = [accounts ? plural(accounts, "account") : "", subtree.length > 1 ? plural(subtree.length - 1, "folder") : ""];
   const contents = parts.filter(Boolean).join(", ");
   const what = contents ? `"${group.name}" and everything in it (${contents})` : `"${group.name}" (empty)`;
-  const permanent = !v.recycleBinEnabled || inRecycleBin(v, group);
+  const permanent = !v.recycleBinEnabled;
 
   const ok = await confirmDialog(
-    group.isRecycleBin
+    permanent
       ? {
-          title: "Empty Recycle Bin?",
-          message: contents
-            ? `Everything in the Recycle Bin (${contents}) will be deleted for good. This can't be undone.`
-            : "The Recycle Bin is already empty. It will be removed and created again on the next delete.",
-          confirm: "Empty Recycle Bin",
+          title: "Delete permanently?",
+          message: `This database has its Recycle Bin turned off, so ${what} will be deleted for good. This can't be undone.`,
+          confirm: "Delete",
           danger: true,
         }
-      : permanent
-        ? {
-            title: "Delete permanently?",
-            message: `${what} will be deleted for good. This can't be undone.`,
-            confirm: "Delete",
-            danger: true,
-          }
-        : {
-            title: "Delete group?",
-            message: `${what} will move to the Recycle Bin.`,
-            confirm: "Move to Recycle Bin",
-          },
+      : {
+          title: "Delete folder?",
+          message: `${what} will move to the Recycle Bin.`,
+          confirm: "Move to Recycle Bin",
+        },
   );
   if (!ok) return;
   try {
     nav.main(await api.deleteGroup(group.id));
-    toast(group.isRecycleBin ? "Recycle Bin emptied" : permanent ? "Deleted" : "Moved to Recycle Bin");
+    toast(permanent ? "Deleted" : "Moved to Recycle Bin");
   } catch (err) {
     toast(errorText(err));
   }
 }
 
-/** Distinct hues for letter tiles; raw `hash % 360` bunches similar names together. */
-const AVATAR_HUES = [4, 28, 48, 96, 150, 178, 204, 228, 266, 312];
-
-/** Letter tile coloured from the title, so accounts are told apart at a glance. */
-function avatar(title: string, size: "small" | "large"): HTMLElement {
-  const letter = (title.match(/[\p{L}\p{N}]/u)?.[0] ?? "?").toUpperCase();
-  let hash = 0;
-  for (const ch of title.toLowerCase()) hash = (hash * 31 + ch.codePointAt(0)!) >>> 0;
-  const hue = AVATAR_HUES[hash % AVATAR_HUES.length];
-  return el("div", { class: `avatar ${size}`, style: { "--hue": String(hue) }, attrs: { "aria-hidden": "true" } }, letter);
+async function emptyRecycleBin(v: MainView): Promise<void> {
+  const ok = await confirmDialog({
+    title: "Empty Recycle Bin?",
+    message: `${plural(v.counts.recycleBin, "account")} in the Recycle Bin will be deleted for good. This can't be undone.`,
+    confirm: "Empty Recycle Bin",
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    nav.main(await api.emptyRecycleBin());
+    toast("Recycle Bin emptied");
+  } catch (err) {
+    toast(errorText(err));
+  }
 }
 
-function entryRow(entry: EntrySummary, selected: boolean): HTMLElement {
+/** Letter tile. Coloured by the account's folder unless tile colours are off; accounts outside any folder stay neutral. */
+function avatar(v: MainView, title: string, folder: Id | null, size: "small" | "large"): HTMLElement {
+  const letter = (title.match(/[\p{L}\p{N}]/u)?.[0] ?? "?").toUpperCase();
+  const f = v.tileColors === "folder" && folder ? v.folders.find((g) => g.id === folder) : undefined;
+  return el(
+    "div",
+    {
+      class: `avatar ${size}` + (f ? "" : " neutral"),
+      style: f ? { "--hue": String(COLOR_HUES[folderColor(f)]) } : undefined,
+      attrs: { "aria-hidden": "true" },
+    },
+    letter,
+  );
+}
+
+function entryRow(v: MainView, entry: EntrySummary, selected: boolean): HTMLElement {
+  // Inside a folder its name would repeat on every row; everywhere else it says where the account lives.
+  const where = v.filter.kind === "group" && !v.search ? null : entry.folder && v.folders.find((f) => f.id === entry.folder)?.name;
+  const sub = [entry.username || entry.url, where].filter(Boolean).join(" · ");
   return el(
     "div",
     {
@@ -334,7 +475,7 @@ function entryRow(entry: EntrySummary, selected: boolean): HTMLElement {
       attrs: { role: "option", "aria-selected": String(selected) },
       on: { click: () => void run(api.selectEntry(entry.id)) },
     },
-    avatar(entry.title, "small"),
+    avatar(v, entry.title, entry.folder, "small"),
     el(
       "div",
       { class: "entry-text" },
@@ -344,14 +485,28 @@ function entryRow(entry: EntrySummary, selected: boolean): HTMLElement {
         el("span", { class: "entry-title" }, entry.title || "(untitled)"),
         entry.stale ? el("fluent-badge", { appearance: "tint", color: "danger", size: "small" }, "not working") : null,
       ),
-      el("div", { class: "entry-sub" }, entry.username || entry.url),
+      el("div", { class: "entry-sub" }, sub),
     ),
   );
 }
 
+function emptyText(v: MainView): string {
+  if (v.search) return "Nothing matches.";
+  switch (v.filter.kind) {
+    case "all":
+      return "No accounts yet. Add one with + Add.";
+    case "notWorking":
+      return "Nothing is marked as not working.";
+    case "recycleBin":
+      return "The Recycle Bin is empty.";
+    case "group":
+      return "No accounts in this folder yet.";
+  }
+}
+
 function renderList(v: MainView): void {
   if (v.entries.length === 0) {
-    setChildren(entryList, el("div", { class: "empty-state" }, v.search ? "Nothing matches." : "No accounts in this group yet."));
+    setChildren(entryList, el("div", { class: "empty-state" }, emptyText(v)));
     return;
   }
   const rows: Child[] = [];
@@ -361,7 +516,7 @@ function renderList(v: MainView): void {
       if (rows.length > 0) rows.push(el("fluent-divider", { class: "stale-divider" }));
       dividerAdded = true;
     }
-    rows.push(entryRow(entry, entry.id === v.selectedEntry));
+    rows.push(entryRow(v, entry, entry.id === v.selectedEntry));
   }
   setChildren(entryList, rows);
   entryList.querySelector(".entry-row.selected")?.scrollIntoView({ block: "nearest" });
@@ -562,16 +717,27 @@ function renderDetail(v: MainView): void {
       el(
         "div",
         { class: "detail-header", attrs: { "data-tauri-drag-region": true } },
-        avatar(d.title, "large"),
+        avatar(v, d.title, d.folder, "large"),
         el(
           "div",
           { class: "detail-title-block" },
+          d.folderPath
+            ? el(
+                "button",
+                {
+                  class: "detail-folder",
+                  attrs: { type: "button", title: d.folder ? "Show this folder" : undefined, disabled: !d.folder },
+                  on: { click: () => d.folder && void run(api.selectFilter({ kind: "group", id: d.folder })) },
+                },
+                d.inBin ? icon("delete") : icon("folder"),
+                d.folderPath,
+              )
+            : null,
           el("h2", { class: "detail-title" }, d.title || "(untitled)"),
           el(
             "div",
             { class: "detail-badges" },
             d.stale ? el("fluent-badge", { appearance: "tint", color: "danger" }, "not working") : null,
-            d.inBin ? el("fluent-badge", { appearance: "tint", color: "subtle" }, "In Recycle Bin") : null,
           ),
         ),
         el(

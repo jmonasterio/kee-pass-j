@@ -361,22 +361,33 @@ html[data-os="macos"] .sidebar-top {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 8px;
   min-height: 36px;
   padding: 0 4px 0 12px;
   border-radius: var(--borderRadiusMedium);
+  color: var(--colorNeutralForeground1);
+  cursor: default;
+}
+
+.nav-row > .icon {
+  width: 18px;
+  height: 18px;
   color: var(--colorNeutralForeground2);
 }
 
 .nav-row:hover {
   background: var(--colorSubtleBackgroundHover);
-  color: var(--colorNeutralForeground1);
 }
 
+/* Selected row: a white card on the sidebar, like the Windows 11 Settings navigation. */
 .nav-row.selected {
-  background: var(--colorSubtleBackgroundSelected);
-  color: var(--colorNeutralForeground1);
+  background: var(--colorNeutralBackground1);
+  box-shadow: var(--shadow2);
   font-weight: var(--fontWeightSemibold);
+}
+
+.nav-row.selected > .icon {
+  color: var(--colorBrandForeground1);
 }
 
 /* Windows 11 navigation selection pill. */
@@ -404,22 +415,55 @@ html[data-os="macos"] .sidebar-top {
   white-space: nowrap;
 }
 
-.group-row {
+.nav-count {
+  font-size: var(--fontSizeBase200);
+  color: var(--colorNeutralForeground2);
+  font-variant-numeric: tabular-nums;
+  padding: 0 4px;
+}
+
+.folder-row {
   padding-left: calc(12px + var(--depth, 0) * 16px);
 }
 
-.group-row.bin {
-  color: var(--colorNeutralForeground3);
+/* Legend for the tile colours: the folder's colour as a dot. */
+.folder-dot {
+  width: 12px;
+  height: 12px;
+  margin: 0 3px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: hsl(var(--hue) 62% 52%);
+  box-shadow: inset 0 0 0 1px hsl(var(--hue) 50% 40% / 0.5);
 }
 
+.section-gap {
+  height: 8px;
+}
+
+.nav-empty {
+  padding: 4px 12px;
+  font-size: var(--fontSizeBase200);
+  color: var(--colorNeutralForeground2);
+}
+
+/* Row actions (lock, folder menu, empty bin) take the count's place while the row is hovered,
+   so counts stay lined up. The selected database keeps its lock visible. */
 .row-action {
-  opacity: 0;
+  display: none;
 }
 
 .nav-row:hover .row-action,
-.nav-row.selected .row-action,
-.row-action:focus-visible {
-  opacity: 1;
+.tab-row.selected .row-action,
+.row-action:focus-within,
+.row-action:focus-visible,
+fluent-menu.row-action[open] {
+  display: inline-flex;
+}
+
+.nav-row:hover .nav-count,
+.nav-row:has(fluent-menu.row-action[open]) .nav-count {
+  display: none;
 }
 
 .dirty-dot {
@@ -529,7 +573,7 @@ html[data-os="macos"] .list-toolbar {
   gap: 2px;
 }
 
-/* Letter tiles; hue comes from the title. */
+/* Letter tiles; hue comes from the account's folder colour. */
 .avatar {
   flex-shrink: 0;
   display: grid;
@@ -566,6 +610,17 @@ html[data-os="macos"] .list-toolbar {
   .avatar.large {
     box-shadow: var(--shadow4), inset 0 0 0 1px hsl(var(--hue) 35% 36% / 0.6);
   }
+}
+
+/* No folder, or tile colours turned off. */
+.avatar.neutral {
+  background: var(--colorNeutralBackground3);
+  color: var(--colorNeutralForeground2);
+  box-shadow: inset 0 0 0 1px var(--colorNeutralStroke2);
+}
+
+.avatar.large.neutral {
+  box-shadow: var(--shadow4), inset 0 0 0 1px var(--colorNeutralStroke2);
 }
 
 .entry-row.stale .avatar {
@@ -664,6 +719,66 @@ html[data-os="macos"] .detail-scroll {
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+/* "Email › Work" above the title; jumps to that folder. */
+.detail-folder {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: var(--fontSizeBase200);
+  color: var(--colorNeutralForeground2);
+  cursor: pointer;
+}
+
+.detail-folder:disabled {
+  cursor: default;
+}
+
+.detail-folder:not(:disabled):hover {
+  color: var(--colorBrandForeground1);
+  text-decoration: underline;
+}
+
+.detail-folder .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.detail-title {
+  margin: 0;
+}
+
+/* Folder colour picker. */
+.swatches {
+  display: grid;
+  grid-template-columns: repeat(5, 40px);
+  gap: 12px;
+  padding: 4px 0 8px;
+}
+
+.swatch {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  background: hsl(var(--hue) 62% 52%);
+  box-shadow: inset 0 0 0 3px var(--colorNeutralBackground1);
+  cursor: pointer;
+}
+
+.swatch.selected {
+  border-color: var(--colorNeutralForeground1);
+}
+
+.swatch:focus-visible {
+  outline: 2px solid var(--colorStrokeFocus2);
+  outline-offset: 2px;
 }
 
 .detail-title {

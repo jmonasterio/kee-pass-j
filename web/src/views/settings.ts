@@ -47,6 +47,7 @@ export async function openSettings(): Promise<void> {
     attrs: { spellcheck: "false", "aria-label": "Default typing sequence" },
   });
   const reopenLast = toggle("Reopen the last database", current.reopenLast);
+  const folderColors = toggle("Colour tiles by folder", current.tileColors === "folder");
   const notesMonospace = toggle("Monospace notes", current.notesMonospace);
 
   const length = Math.min(128, Math.max(4, current.generator.length));
@@ -70,6 +71,7 @@ export async function openSettings(): Promise<void> {
       autotypeHotkey: hotkey.value.trim(),
       autotypeDefaultSequence: sequence.value.trim(),
       reopenLast: reopenLast.checked,
+      tileColors: folderColors.checked ? "folder" : "off",
       notesMonospace: notesMonospace.checked,
       generator: {
         length: Number(slider.value) || length,
@@ -107,6 +109,12 @@ export async function openSettings(): Promise<void> {
       "General",
       row("refresh", "Reopen the last database", "Have it selected on the unlock screen when the app starts.", reopenLast),
       row("text", "Monospace notes", "Show notes in a fixed-width font, so columns line up.", notesMonospace),
+      row(
+        "folder",
+        "Colour tiles by folder",
+        "Each account's letter tile takes its folder's colour. Pick a folder's colour from its ⋯ menu in the sidebar.",
+        folderColors,
+      ),
     ),
     section(
       "New passwords",

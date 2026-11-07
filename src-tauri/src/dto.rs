@@ -2,6 +2,7 @@
 //! The list and detail views never carry passwords or other protected values; those only
 //! cross the bridge through `reveal_field` (one value on demand) and the edit form.
 
+use ourlogins::settings::TileColors;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize)]
@@ -38,16 +39,37 @@ pub struct TabItem {
     pub dirty: bool,
 }
 
+/// A folder in the sidebar (any group except the root and the Recycle Bin subtree).
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GroupItem {
     pub id: String,
     pub parent: Option<String>,
     pub name: String,
+    /// 0 for folders directly under the root.
     pub depth: usize,
-    pub is_recycle_bin: bool,
-    /// Entries directly in this group.
+    /// Entries directly in this folder.
     pub entry_count: usize,
+    /// Colour name the user picked; `None` = automatic.
+    pub color: Option<String>,
+}
+
+/// What the account list shows when the search box is empty.
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum FilterDto {
+    All,
+    NotWorking,
+    RecycleBin,
+    Group { id: String },
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Counts {
+    pub all: usize,
+    pub not_working: usize,
+    pub recycle_bin: usize,
 }
 
 #[derive(Serialize)]
@@ -58,6 +80,8 @@ pub struct EntrySummary {
     pub username: String,
     pub url: String,
     pub stale: bool,
+    /// Folder id; `None` when the entry sits in the root (or the Recycle Bin).
+    pub folder: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -79,6 +103,10 @@ pub struct EntryDetail {
     pub tags: Vec<String>,
     pub stale: bool,
     pub in_bin: bool,
+    /// Folder id (see `EntrySummary::folder`).
+    pub folder: Option<String>,
+    /// "Email › Work"; "Recycle Bin" for deleted entries; `None` in the root.
+    pub folder_path: Option<String>,
     pub modified: String,
     pub has_password: bool,
     pub has_recovery_pin: bool,
@@ -93,8 +121,9 @@ pub struct EntryDetail {
 pub struct MainView {
     pub tabs: Vec<TabItem>,
     pub active_tab: usize,
-    pub groups: Vec<GroupItem>,
-    pub selected_group: Option<String>,
+    pub folders: Vec<GroupItem>,
+    pub filter: FilterDto,
+    pub counts: Counts,
     pub search: String,
     pub entries: Vec<EntrySummary>,
     pub selected_entry: Option<String>,
@@ -103,6 +132,7 @@ pub struct MainView {
     pub notes_monospace: bool,
     /// False when the database has its recycle bin turned off: every delete is permanent.
     pub recycle_bin_enabled: bool,
+    pub tile_colors: TileColors,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy)]
@@ -182,6 +212,7 @@ pub struct SettingsView {
     pub autotype_default_sequence: String,
     pub reopen_last: bool,
     pub notes_monospace: bool,
+    pub tile_colors: TileColors,
     pub generator: GeneratorSettings,
     pub backup_dir: String,
 }
