@@ -7,7 +7,7 @@ import { initTheme } from "./theme";
 import { toast } from "./toast";
 import { mainKeydown, renderMain } from "./views/main";
 import { startQuick } from "./views/quick";
-import { renderUnlock, unlockKeydown } from "./views/unlock";
+import { leaveUnlock, renderUnlock, unlockKeydown } from "./views/unlock";
 
 type Page = "unlock" | "main";
 
@@ -49,6 +49,7 @@ async function start(): Promise<void> {
     renderUnlock(root, view);
   };
   nav.main = (view) => {
+    if (page === "unlock") leaveUnlock();
     page = "main";
     renderMain(root, view);
   };

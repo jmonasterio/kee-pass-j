@@ -9,14 +9,14 @@ let passwordInput: HTMLElementTagNameMap["fluent-text-input"] | null = null;
 let submit: (() => void) | null = null;
 
 export function renderUnlock(root: HTMLElement, next: UnlockView): void {
-  // Keep a typed password when the page refreshes for the same database (e.g. after picking a key file).
-  const keptPassword = passwordInput && view && !view.pendingNew ? passwordInput.value : "";
+  // Keep a typed password only while this page stays on screen and refreshes for the same
+  // database (e.g. after picking a key file). Once the page was left, nothing carries over.
+  const keptPassword = passwordInput?.isConnected && view && !view.pendingNew ? passwordInput.value : "";
   const previous = selected;
+  leaveUnlock();
   view = next;
   const paths = new Set(next.recent.map((r) => r.path));
   selected = next.selected ?? (previous && paths.has(previous) ? previous : null);
-  passwordInput = null;
-  submit = null;
 
   const header = el("div", { class: "unlock-header" }, el("h1", { class: "app-title" }, "Our Logins"));
   const body = next.pendingNew ? createForm(next.pendingNew) : openForm(next, selected === previous ? keptPassword : "");
@@ -31,6 +31,16 @@ export function renderUnlock(root: HTMLElement, next: UnlockView): void {
     ),
   );
   (passwordInput as HTMLElement | null)?.focus();
+}
+
+/** Wipes the password boxes of the unlock page; called whenever the page is replaced. */
+export function leaveUnlock(): void {
+  for (const box of document.querySelectorAll<HTMLElementTagNameMap["fluent-text-input"]>(".unlock-card .password-box")) {
+    box.value = "";
+  }
+  if (passwordInput) passwordInput.value = "";
+  passwordInput = null;
+  submit = null;
 }
 
 async function back(): Promise<void> {
