@@ -54,8 +54,13 @@ impl Vault {
     pub fn path(&self) -> &Path;
     pub fn name(&self) -> String;            // db name from meta, else file stem
     pub fn is_dirty(&self) -> bool;
-    /// Atomic write: `<path>.tmp` → fsync → rename over `<path>`. Then copy to backups and rotate.
+    pub fn key_matches(&self, password: &str, keyfile: Option<&Path>) -> Result<bool, VaultError>;
+    pub fn change_key(&mut self, password: &str, keyfile: Option<&Path>) -> Result<(), VaultError>;  // marks dirty; the next save re-encrypts
+    /// `start_save` + `SaveJob::run`; on failure the vault stays dirty.
     pub fn save(&mut self, backups: &BackupPolicy) -> Result<(), VaultError>;
+    /// Clones the database and key into a job and marks the vault clean. The job runs without the vault.
+    pub fn start_save(&mut self) -> SaveJob;
+    pub fn save_failed(&mut self, backed_up_original: bool);  // job failed: dirty again, original copy still owed
     pub fn root(&self) -> GroupId;
     pub fn groups(&self) -> Vec<GroupView>;  // pre-order, depth-first, root first
     pub fn entries_in(&self, group: GroupId) -> Vec<EntryView>;  // direct children only, stale last, then title A-Z
@@ -79,6 +84,12 @@ impl Vault {
     pub fn attachments_total_bytes(&self) -> u64;  // every entry, Recycle Bin included; identical files counted once per entry (no dedup on save)
     pub fn add_attachment(&mut self, id: EntryId, name: &str, bytes: Vec<u8>) -> Result<(), VaultError>;
     pub fn remove_attachment(&mut self, id: EntryId, name: &str) -> Result<(), VaultError>;
+}
+impl SaveJob {
+    /// Encrypts once into memory; `<path>.tmp` → fsync → rename over `<path>`; writes the same
+    /// bytes to the backup folder (the file is never read back); rotates backups.
+    pub fn run(self, backups: &BackupPolicy) -> Result<(), VaultError>;
+    pub fn backs_up_original(&self) -> bool;
 }
 pub fn url_host(url: &str) -> Option<String>;  // "https://www.Foo.com/x" -> "foo.com"; bare "foo.com" accepted
 pub fn list_backups(policy: &BackupPolicy, db_path: &Path) -> Vec<std::path::PathBuf>;  // newest first
@@ -189,6 +200,20 @@ vanilla TypeScript plus Fluent UI Web Components v3 (`web/src`), bundled by esbu
   `attach_picked` or `cancel_attachment`. `open_attachment` writes a copy to
   `<data dir>/open/<random>/<name>` and opens it with the default app; the `open` folder
   is deleted when the last database locks, at exit and at startup.
+- The Add document form keeps chosen files as paths in `AppState.form_files`
+  (`form_pick_files`, `form_remove_file`; `form_open` clears them). `form_save` reads them
+  before changing the database and attaches them to the saved entry; equal names get " (2)".
+- `src-tauri/src/saver.rs`: background saving. A command that changes a database calls
+  `save_tab`, which starts one thread per file (`AppState.saving` lists them). The thread
+  takes `Vault::start_save` under the lock, runs the job without it, repeats while the vault
+  is dirty again, records `save_error` (keyed by path) and emits `saved`; the page then
+  re-reads `main_view`. `lock_tab`, `change_master_password` and exit use `wait_idle` and
+  then `save_now` on the calling thread. `lock_tab(discard)` locks despite a failing save
+  only after the page asked "Lock without saving?".
+- `change_master_password` checks the current password with `key_matches`, re-keys, saves at
+  once (and restores the old key if that save fails), and forgets the quick-unlock password.
+- Sibling folder names are unique ignoring case (`VaultError::DuplicateGroupName`, checked by
+  `add_group` and `rename_group`).
 
 Security rules for the webview:
 

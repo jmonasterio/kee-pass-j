@@ -3,6 +3,7 @@
 mod biometric;
 mod commands;
 mod dto;
+mod saver;
 mod state;
 mod typing;
 
@@ -102,6 +103,7 @@ fn main() {
             });
             // Temporary copies of opened attachments left by a crash.
             commands::clear_open_dir();
+            app.state::<state::Shared>().lock().app = Some(app.handle().clone());
             let notice = typing::init(app.handle());
             app.manage(commands::Platform { backdrop, notice });
             Ok(())
@@ -122,6 +124,10 @@ fn main() {
             commands::select_tab,
             commands::lock_tab,
             commands::select_filter,
+            commands::rename_group,
+            commands::change_master_password,
+            commands::form_pick_files,
+            commands::form_remove_file,
             commands::add_group,
             commands::set_group_color,
             commands::empty_recycle_bin,
@@ -159,8 +165,9 @@ fn main() {
         ])
         .build(tauri::generate_context!())
         .expect("Our Logins failed to start")
-        .run(|_app, event| {
+        .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
+                saver::flush_all(&app.state::<state::Shared>());
                 commands::clear_open_dir();
             }
         });

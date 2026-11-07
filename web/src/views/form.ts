@@ -1,6 +1,7 @@
-import { api, errorText, type CustomField, type EntryForm, type FormData, type FormMode, type Id } from "../api";
+import { api, errorText, type CustomField, type EntryForm, type FormData, type FormFiles, type FormMode, type Id } from "../api";
 import { onClosed } from "../dialogs";
-import { button, debounce, el, field } from "../dom";
+import { button, debounce, el, field, setChildren } from "../dom";
+import { BACKUP_COPIES, FILE_ADVICE, formatBytes, LARGE_FILE, LARGE_TOTAL } from "../files";
 import { nav } from "../nav";
 import { toast } from "../toast";
 
@@ -317,19 +318,20 @@ export async function openForm(mode: FormMode, notesMonospace: boolean): Promise
   const documentFields = () => [
     field("Name", title),
     field("Text", notes),
-    el("div", { class: "muted small" }, editing ? "" : "Files are added after saving, from the document's page."),
+    editing ? null : filesSection(),
     field("Folder", group),
     editing ? field("Tags", tags) : null,
   ];
   const content = el("div", { class: "form-content" }, isDoc ? documentFields() : accountFields(), error);
 
+  const heading = `${editing ? "Edit" : "Add"} ${noun}` + (data.database ? ` ${editing ? "in" : "to"} ${data.database}` : "");
   const drawer = el(
     "fluent-drawer",
-    { class: "form-drawer", attrs: { position: "end", "aria-label": `${editing ? "Edit" : "Add"} ${noun}` } },
+    { class: "form-drawer", attrs: { position: "end", "aria-label": heading } },
     el(
       "fluent-drawer-body",
       null,
-      el("h2", { class: "dialog-title", attrs: { slot: "title" } }, `${editing ? "Edit" : "Add"} ${noun}`),
+      el("h2", { class: "dialog-title", attrs: { slot: "title" } }, heading),
       closeButton,
       content,
       footer,
@@ -351,4 +353,58 @@ export async function openForm(mode: FormMode, notesMonospace: boolean): Promise
   });
   document.body.appendChild(drawer);
   drawer.show();
+}
+
+/** "Files" in the Add document form: files picked here are attached when the form is saved. */
+function filesSection(): HTMLElement {
+  const list = el("div", { class: "form-file-list" });
+  const note = el("div", { class: "muted small" }, FILE_ADVICE);
+  const show = (f: FormFiles) => {
+    setChildren(
+      list,
+      f.files.map((file, index) =>
+        el(
+          "div",
+          { class: "attachment-row" },
+          el("span", { class: "attachment-name", attrs: { title: file.name } }, file.name),
+          el("span", { class: "attachment-size" }, formatBytes(file.size)),
+          button(null, () => void update(api.formRemoveFile(index)), { icon: "dismiss", appearance: "subtle", size: "small", title: `Remove ${file.name}` }),
+        ),
+      ),
+    );
+    const adding = f.files.reduce((sum, file) => sum + file.size, 0);
+    const after = f.attachmentsBytes + adding;
+    const large = f.files.some((file) => file.size > LARGE_FILE) || after > LARGE_TOTAL;
+    note.classList.toggle("storage-warn", large);
+    if (f.files.length === 0) {
+      note.textContent = FILE_ADVICE;
+    } else if (large) {
+      note.textContent =
+        `Adding ${formatBytes(adding)}; files in this database will total ${formatBytes(after)}. ` +
+        `Every change saves the whole database again, and the backup folder keeps up to ${BACKUP_COPIES} copies of it ` +
+        `(about ${formatBytes((f.fileBytes + adding) * BACKUP_COPIES)}). A photo of a paper is usually much smaller scanned as a PDF; ` +
+        "many large files fit better in a separate database.";
+    } else {
+      note.textContent = `Adding ${formatBytes(adding)}; files in this database will total ${formatBytes(after)}.`;
+    }
+  };
+  const update = async (call: Promise<FormFiles>) => {
+    try {
+      show(await call);
+    } catch (err) {
+      toast(errorText(err));
+    }
+  };
+  return el(
+    "div",
+    { class: "form-files" },
+    el(
+      "div",
+      { class: "field-label-line" },
+      el("label", { class: "form-files-label" }, "Files"),
+      button("Add files…", () => void update(api.formPickFiles()), { icon: "add", appearance: "subtle", size: "small" }),
+    ),
+    list,
+    note,
+  );
 }

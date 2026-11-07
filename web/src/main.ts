@@ -1,4 +1,4 @@
-import { api, errorText, onToast, type PlatformInfo } from "./api";
+import { api, errorText, onSaved, onToast, type PlatformInfo } from "./api";
 import { isOverlayOpen } from "./dialogs";
 import { el, setChildren } from "./dom";
 import { registerFluent } from "./fluent";
@@ -60,6 +60,10 @@ async function start(): Promise<void> {
   });
 
   await onToast(toast);
+  // Saving indicators and save errors live in the main view.
+  await onSaved(() => {
+    if (page === "main") api.mainView().then(nav.main, (err) => toast(errorText(err)));
+  });
 
   nav.unlock(await api.unlockView());
   if (info.notice) toast(info.notice);

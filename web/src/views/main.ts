@@ -10,9 +10,11 @@ import {
   type GroupItem,
   type Id,
   type MainView,
+  type TabItem,
 } from "../api";
 import { confirmDialog, isOverlayOpen, openDialog, promptDialog } from "../dialogs";
-import { button, el, icon, setChildren, type Child } from "../dom";
+import { button, el, field, icon, secretInput, setChildren, type Child } from "../dom";
+import { BACKUP_COPIES, FILE_ADVICE, formatBytes, LARGE_FILE, LARGE_TOTAL } from "../files";
 import { renderMarkdown } from "../markdown";
 import { nav } from "../nav";
 import { toast } from "../toast";
@@ -186,7 +188,12 @@ function renderSidebar(v: MainView): void {
       title: tab.path,
       extraClass: "tab-row",
       actions: [
-        tab.dirty ? el("span", { class: "dirty-dot", attrs: { title: "Not saved" } }) : null,
+        tab.saving
+          ? el("span", { class: "saving-label" }, "Saving…")
+          : tab.unsaved
+            ? el("span", { class: "dirty-dot", attrs: { title: "Not saved" } })
+            : null,
+        databaseMenu(index, tab),
         button(
           null,
           (event) => {
@@ -219,7 +226,14 @@ function renderSidebar(v: MainView): void {
     el("div", { class: "section-head" }, el("span", null, "Databases")),
     el("div", { class: "nav-list", attrs: { role: "list" } }, tabs),
     button("Open…", () => void showUnlockPage(), { icon: "add", appearance: "subtle", class: "nav-button" }),
-    el("div", { class: "section-gap" }),
+    // With several databases open, name the one the lists below belong to.
+    v.tabs.length > 1 && v.tabs[v.activeTab]
+      ? el(
+          "div",
+          { class: "section-head active-db-head", attrs: { title: v.tabs[v.activeTab].path } },
+          el("span", null, `In ${v.tabs[v.activeTab].name}`),
+        )
+      : el("div", { class: "section-gap" }),
     el(
       "div",
       { class: "nav-list", attrs: { role: "list", "aria-label": "Show" } },
@@ -293,11 +307,88 @@ function folderMenu(v: MainView, f: GroupItem): HTMLElement {
     el(
       "fluent-menu-list",
       null,
+      el("fluent-menu-item", { on: { click: () => renameGroup(f) } }, "Rename…"),
       el("fluent-menu-item", { on: { click: () => pickColor(f) } }, "Colour…"),
       el("fluent-menu-item", { on: { click: () => addGroup(v, f) } }, "New folder inside"),
       el("fluent-menu-item", { class: "danger-item", on: { click: () => void deleteGroup(v, f) } }, "Delete folder…"),
     ),
   );
+}
+
+function databaseMenu(index: number, tab: TabItem): HTMLElement {
+  const trigger = button(null, (event) => event.stopPropagation(), { icon: "more", appearance: "transparent", size: "small", title: `${tab.name} options` });
+  trigger.setAttribute("slot", "trigger");
+  return el(
+    "fluent-menu",
+    { class: "row-action", on: { click: (event: MouseEvent) => event.stopPropagation() } },
+    trigger,
+    el(
+      "fluent-menu-list",
+      null,
+      el("fluent-menu-item", { on: { click: () => changeMasterPassword(index, tab) } }, "Change master password…"),
+      el("fluent-menu-item", { on: { click: () => void lockTab(index) } }, "Lock"),
+    ),
+  );
+}
+
+function changeMasterPassword(index: number, tab: TabItem): void {
+  const current = secretInput("Current master password");
+  const next = secretInput("New master password");
+  const repeat = secretInput("New master password again");
+  const error = el("div", { class: "form-error", attrs: { role: "alert" } });
+  let busy = false;
+  const submit = async () => {
+    if (busy) return;
+    error.textContent = "";
+    if (!current.value) return void (error.textContent = "Type the current password.");
+    if (!next.value) return void (error.textContent = "Type the new password.");
+    if (next.value !== repeat.value) return void (error.textContent = "The two new passwords are different.");
+    busy = true;
+    ok.disabled = true;
+    ok.textContent = "Saving…";
+    try {
+      // The command works on the active database; make sure that is this one.
+      if (view?.activeTab !== index) await api.selectTab(index);
+      nav.main(await api.changeMasterPassword(current.value, next.value));
+      handle.close();
+      toast(`Master password of "${tab.name}" changed.`);
+    } catch (err) {
+      error.textContent = errorText(err);
+      ok.textContent = "Change password";
+    } finally {
+      busy = false;
+      ok.disabled = false;
+    }
+  };
+  for (const input of [current, next, repeat]) {
+    input.addEventListener("keydown", (event: KeyboardEvent) => {
+      if (event.key === "Enter" && !event.isComposing) {
+        event.preventDefault();
+        void submit();
+      }
+    });
+  }
+  const ok = button("Change password", () => void submit(), { appearance: "primary" });
+  const handle = openDialog({
+    title: "Change master password",
+    class: "narrow-dialog",
+    body: el(
+      "div",
+      { class: "stack" },
+      el("p", { class: "dialog-text muted" }, `For "${tab.name}". A key file used with it stays the same.`),
+      field("Current password", current),
+      field("New password", next),
+      field("New password again", repeat),
+      el(
+        "p",
+        { class: "dialog-text muted small" },
+        "Everyone who opens this file needs the new password. Backups made before now still open with the old one. Quick unlock (Windows Hello / Touch ID) is set up again at the next unlock with the new password.",
+      ),
+      error,
+    ),
+    actions: [button("Cancel", () => handle.close()), ok],
+  });
+  current.focus();
 }
 
 /** Hue for each folder colour name; the CSS turns a hue into light/dark tile shades. */
@@ -363,17 +454,25 @@ async function showUnlockPage(): Promise<void> {
 async function lockTab(index: number): Promise<void> {
   const tab = view?.tabs[index];
   if (!tab) return;
-  if (tab.dirty) {
+  let next: MainView;
+  try {
+    next = await api.lockTab(index, false);
+  } catch (err) {
     const ok = await confirmDialog({
       title: "Lock without saving?",
-      message: `The last save of "${tab.name}" failed. Changes made since then will be lost if you lock it now.`,
+      message: `${errorText(err)} Changes to "${tab.name}" since its last successful save will be lost if you lock it now.`,
       confirm: "Lock anyway",
       danger: true,
     });
     if (!ok) return;
+    try {
+      next = await api.lockTab(index, true);
+    } catch (err2) {
+      toast(errorText(err2));
+      return;
+    }
   }
   try {
-    const next = await api.lockTab(index);
     if (next.tabs.length === 0) nav.unlock(await api.unlockView());
     else nav.main(next);
   } catch (err) {
@@ -394,6 +493,25 @@ function addGroup(v: MainView, parent?: GroupItem): void {
       if (!name) return "Give the folder a name first.";
       try {
         nav.main(await api.addGroup(inside?.id ?? null, name));
+        return null;
+      } catch (err) {
+        return errorText(err);
+      }
+    },
+  });
+}
+
+function renameGroup(group: GroupItem): void {
+  promptDialog({
+    title: "Rename folder",
+    label: "Name",
+    value: group.name,
+    confirm: "Rename",
+    submit: async (name) => {
+      if (!name) return "Give the folder a name first.";
+      if (name === group.name) return null;
+      try {
+        nav.main(await api.renameGroup(group.id, name));
         return null;
       } catch (err) {
         return errorText(err);
@@ -633,23 +751,6 @@ async function saveAttachment(name: string): Promise<void> {
     toast(errorText(err));
   }
 }
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
-}
-
-/** One file above this gets a warning before it is added. */
-const LARGE_FILE = 5 * 1024 * 1024;
-/** All files together above this get a warning: every save rewrites them, every backup copies them. */
-const LARGE_TOTAL = 50 * 1024 * 1024;
-/** Full copies the backup folder keeps at most: the newest 20 plus one per day for 30 days. */
-const BACKUP_COPIES = 50;
-
-const FILE_ADVICE =
-  "Good fits: scans of IDs and passports, a will, insurance papers — a few MB each. Photo collections and videos make every save slow and every backup large; keep those elsewhere.";
 
 /** "Add file…": pick, show the sizes (warn when big), then attach. */
 async function addFile(): Promise<void> {

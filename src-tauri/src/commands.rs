@@ -14,6 +14,7 @@ use ourlogins::settings;
 use ourlogins::vault::{self, CustomField, EntryEdit, EntryView, Vault};
 
 use crate::biometric;
+use crate::saver;
 use crate::dto::*;
 use crate::state::{filter_shows, folders, ordered_groups, parse_entry_id, parse_filter, parse_group_id, AppState, Filter, OpenDb, Shared};
 use crate::typing;
@@ -366,18 +367,26 @@ pub async fn select_tab(state: State<'_, Shared>, index: usize) -> R<MainView> {
     Ok(st.main_view())
 }
 
+/// Locks tab `index` after its changes are on disk. With `discard`, a failing save does not
+/// stop the lock (the window has asked "Lock without saving?").
 #[tauri::command]
-pub async fn lock_tab(state: State<'_, Shared>, index: usize) -> R<MainView> {
-    let mut st = state.lock();
-    if index >= st.dbs.len() {
+pub async fn lock_tab(state: State<'_, Shared>, index: usize, discard: bool) -> R<MainView> {
+    let Some(path) = state.lock().dbs.get(index).map(|d| d.vault.path().to_path_buf()) else {
+        return Ok(state.lock().main_view());
+    };
+    let mut st = saver::wait_idle(state.inner(), &path);
+    let Some(index) = st.dbs.iter().position(|d| d.vault.path() == path) else {
         return Ok(st.main_view());
+    };
+    if let Err(e) = saver::save_now(&mut st, index) {
+        if !discard {
+            return Err(format!("Could not save before locking: {e}"));
+        }
     }
     st.dbs.remove(index);
-    st.save_error = match st.save_error.take() {
-        Some((t, _)) if t == index => None,
-        Some((t, e)) if t > index => Some((t - 1, e)),
-        other => other,
-    };
+    if st.save_error.as_ref().is_some_and(|(p, _)| *p == path) {
+        st.save_error = None;
+    }
     if st.active_tab > index || st.active_tab >= st.dbs.len() {
         st.active_tab = st.active_tab.saturating_sub(1);
     }
@@ -415,6 +424,13 @@ pub async fn add_group(state: State<'_, Shared>, parent: Option<String>, name: S
         db.filter = Filter::Group(id);
         Ok(())
     })
+}
+
+#[tauri::command]
+pub async fn rename_group(state: State<'_, Shared>, id: String, name: String) -> R<MainView> {
+    let gid = parse_group_id(&id)?;
+    let mut st = state.lock();
+    mutate(&mut st, "Could not rename the folder", |db| db.vault.rename_group(gid, &name))
 }
 
 /// Sets a folder's colour (one of `FOLDER_COLORS`), or back to automatic with `None`.
@@ -639,8 +655,41 @@ pub async fn open_url(url: String) -> R<()> {
 #[tauri::command]
 pub async fn retry_save(state: State<'_, Shared>) -> R<MainView> {
     let mut st = state.lock();
-    let tab = st.save_error.as_ref().map_or(st.active_tab, |(t, _)| *t);
+    let failed = st.save_error.as_ref().and_then(|(p, _)| st.dbs.iter().position(|d| d.vault.path() == p));
+    let tab = failed.unwrap_or(st.active_tab);
     st.save_tab(tab);
+    Ok(st.main_view())
+}
+
+/// Changes the master password of the active database and saves at once, so the result is
+/// known before the dialog closes. The key file, if any, stays the same. Backups made
+/// before the change still open with the old password.
+#[tauri::command]
+pub async fn change_master_password(state: State<'_, Shared>, current: String, new: String) -> R<MainView> {
+    if new.is_empty() {
+        return Err("Type the new password.".into());
+    }
+    let Some(path) = state.lock().active().map(|d| d.vault.path().to_path_buf()) else {
+        return Err("No database is open.".into());
+    };
+    let mut st = saver::wait_idle(state.inner(), &path);
+    let keyfile = st.settings.recent.iter().find(|r| r.path == path).and_then(|r| r.keyfile.clone());
+    let keyfile = keyfile.as_deref();
+    let key_err = |e: vault::VaultError| format!("Could not use the key file: {e}");
+    let tab = st.dbs.iter().position(|d| d.vault.path() == path).ok_or("That database is no longer open.")?;
+    let vault = &mut st.dbs[tab].vault;
+    if !vault.key_matches(&current, keyfile).map_err(key_err)? {
+        return Err("The current password is not right.".into());
+    }
+    vault.change_key(&new, keyfile).map_err(key_err)?;
+    if let Err(e) = saver::save_now(&mut st, tab) {
+        // Keep the file and the open copy on the same password.
+        st.dbs[tab].vault.change_key(&current, keyfile).map_err(key_err)?;
+        return Err(format!("The password was not changed; saving failed: {e}"));
+    }
+    // A password kept for Windows Hello / Touch ID is the old one now. The next unlock with
+    // the new password stores it again.
+    biometric::forget(&path);
     Ok(st.main_view())
 }
 
@@ -650,7 +699,8 @@ pub async fn retry_save(state: State<'_, Shared>) -> R<MainView> {
 
 #[tauri::command]
 pub async fn form_open(state: State<'_, Shared>, mode: String) -> R<FormData> {
-    let st = state.lock();
+    let mut st = state.lock();
+    st.form_files.clear();
     let db = st.active().ok_or("No database is open.")?;
     let groups = ordered_groups(&db.vault);
     let g = &st.settings.generator;
@@ -717,6 +767,7 @@ pub async fn form_open(state: State<'_, Shared>, mode: String) -> R<FormData> {
     };
     Ok(FormData {
         mode: if entry.id.is_some() { "edit" } else { "add" },
+        database: (st.dbs.len() > 1).then(|| db.vault.name()),
         groups: form_groups,
         gen,
         entry,
@@ -788,12 +839,32 @@ pub async fn form_save(state: State<'_, Shared>, entry: EntryForm, replace: Opti
             .collect(),
         document: entry.document,
     };
+    // Files chosen in the form: read them before touching the database, so a missing file
+    // stops the save with the form still open.
+    let paths = st.form_files.clone();
+    let mut files: Vec<(String, Vec<u8>)> = Vec::with_capacity(paths.len());
+    for path in &paths {
+        let bytes = std::fs::read(path).map_err(|e| format!("Could not read {}: {e}", path.display()))?;
+        let base = file_name(path);
+        // Two picked files with the same name both stay: "scan.pdf", "scan (2).pdf".
+        let mut name = base.clone();
+        let mut n = 2;
+        while files.iter().any(|(f, _)| *f == name) {
+            name = numbered_name(&base, n);
+            n += 1;
+        }
+        files.push((name, bytes));
+    }
+    let db = st.active_or_err()?;
     let new_id = db
         .vault
         .upsert_entry(edit)
         .and_then(|new_id| {
             if let Some(old) = replace.filter(|old| *old != new_id) {
                 db.vault.set_stale(old, true)?;
+            }
+            for (name, bytes) in files {
+                db.vault.add_attachment(new_id, &name, bytes)?;
             }
             Ok(new_id)
         })
@@ -806,9 +877,57 @@ pub async fn form_save(state: State<'_, Shared>, entry: EntryForm, replace: Opti
             db.filter = if saved.group == db.vault.root() { Filter::All } else { Filter::Group(saved.group) };
         }
     }
+    st.form_files.clear();
     st.search.clear();
     st.save_active();
     Ok(st.main_view())
+}
+
+fn file_name(path: &Path) -> String {
+    path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "attachment".into())
+}
+
+/// "scan.pdf", 2 → "scan (2).pdf"; "notes", 3 → "notes (3)".
+fn numbered_name(name: &str, n: usize) -> String {
+    match name.rsplit_once('.') {
+        Some((stem, ext)) if !stem.is_empty() => format!("{stem} ({n}).{ext}"),
+        _ => format!("{name} ({n})"),
+    }
+}
+
+fn form_files_view(st: &AppState) -> FormFiles {
+    let db = st.active();
+    FormFiles {
+        files: st
+            .form_files
+            .iter()
+            .map(|p| AttachmentInfo { name: file_name(p), size: std::fs::metadata(p).map(|m| m.len()).unwrap_or(0) })
+            .collect(),
+        attachments_bytes: db.map_or(0, |d| d.vault.attachments_total_bytes()),
+        file_bytes: db.and_then(|d| std::fs::metadata(d.vault.path()).ok()).map_or(0, |m| m.len()),
+    }
+}
+
+/// "Add files…" in the Add form: picks files to attach when the form is saved.
+#[tauri::command]
+pub async fn form_pick_files(app: AppHandle, state: State<'_, Shared>) -> R<FormFiles> {
+    let picked = file_dialog(&app).blocking_pick_files().unwrap_or_default();
+    let mut st = state.lock();
+    for path in picked.into_iter().filter_map(|p| p.into_path().ok()) {
+        if !st.form_files.contains(&path) {
+            st.form_files.push(path);
+        }
+    }
+    Ok(form_files_view(&st))
+}
+
+#[tauri::command]
+pub async fn form_remove_file(state: State<'_, Shared>, index: usize) -> R<FormFiles> {
+    let mut st = state.lock();
+    if index < st.form_files.len() {
+        st.form_files.remove(index);
+    }
+    Ok(form_files_view(&st))
 }
 
 // ---------------------------------------------------------------------------

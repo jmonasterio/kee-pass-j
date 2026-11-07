@@ -351,6 +351,24 @@ html[data-os="macos"] .sidebar-top {
   padding-top: 4px;
 }
 
+/* "In <database>" above the filters when several databases are open. */
+.active-db-head {
+  margin-top: 8px;
+  border-top: 1px solid var(--colorNeutralStroke2);
+  color: var(--colorBrandForeground1);
+}
+
+.form-files {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.form-files-label {
+  font-size: var(--fontSizeBase300);
+  font-weight: var(--fontWeightSemibold);
+}
+
 .nav-list {
   display: flex;
   flex-direction: column;
@@ -475,6 +493,12 @@ html[data-os="macos"] .sidebar-top {
   height: 8px;
   border-radius: 50%;
   background: var(--colorPaletteRedForeground1);
+  flex-shrink: 0;
+}
+
+.saving-label {
+  font-size: var(--fontSizeBase200);
+  color: var(--colorNeutralForeground3);
   flex-shrink: 0;
 }
 

@@ -40,7 +40,10 @@ pub struct UnlockView {
 pub struct TabItem {
     pub name: String,
     pub path: String,
-    pub dirty: bool,
+    /// A background save of this file is running.
+    pub saving: bool,
+    /// Changes not on disk and no save running: the last save failed.
+    pub unsaved: bool,
 }
 
 /// A folder in the sidebar (any group except the root and the Recycle Bin subtree).
@@ -220,6 +223,17 @@ pub struct AttachmentPick {
     pub file_bytes: u64,
 }
 
+/// Files chosen in the Add document form, attached when the form is saved (sizes in bytes).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FormFiles {
+    pub files: Vec<AttachmentInfo>,
+    /// Attachments already in the database.
+    pub attachments_bytes: u64,
+    /// The database file now.
+    pub file_bytes: u64,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AboutInfo {
@@ -231,6 +245,8 @@ pub struct AboutInfo {
 #[serde(rename_all = "camelCase")]
 pub struct FormData {
     pub mode: &'static str,
+    /// Name of the database the entry belongs to, set when several are open.
+    pub database: Option<String>,
     pub groups: Vec<FormGroup>,
     pub gen: GenOptionsDto,
     pub entry: EntryForm,

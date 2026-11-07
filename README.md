@@ -32,8 +32,9 @@ right-click it and choose Open. Pushing a `v*` tag publishes both as a GitHub re
 **Everyday use**
 
 - Sidebar filters: All accounts, Not working, Documents, folders, Recycle Bin. Folders can
-  be added, renamed, coloured and deleted (with their contents, to the Recycle Bin); letter
-  tiles take their folder's colour. Search is always visible (Ctrl+K).
+  be added, renamed, coloured and deleted (with their contents, to the Recycle Bin); two
+  folders side by side cannot have the same name (ignoring case). Letter tiles take their
+  folder's colour. Search is always visible (Ctrl+K).
 - "Add account" screen: site, URL, username or email, password (generator prefilled),
   recovery PIN and phone, security questions, notes. If the site already exists it offers
   to replace the old entry and flags that one "not working".
@@ -50,12 +51,15 @@ right-click it and choose Open. Pushing a `v*` tag publishes both as a GitHub re
 - Quick unlock: after one unlock with the password, Windows Hello (PIN, fingerprint or face)
   or Touch ID unlocks the database. The password is kept encrypted with a Windows Hello key,
   or in the login Keychain on macOS (see `src-tauri/src/biometric.rs` for the trade-off).
+- Change master password from the database's ⋯ menu (the key file stays the same).
+  Password boxes have a show/hide button.
 
 **Documents and files**
 
 - Documents (+ Add → Document, Ctrl+Shift+N): an entry for IDs, passports, a will or other
-  papers, with a long text in Markdown (plain line breaks are kept) and attached files. The
-  ⋯ menu turns an account into a document and back.
+  papers, with a long text in Markdown (plain line breaks are kept) and attached files.
+  Files can be chosen in the Add document form (several at once) or added later. The ⋯
+  menu turns an account into a document and back.
 - Files on any entry: add, open in the usual app, save as, remove. Sizes are shown for each
   file and for the whole database. Adding asks first when one file is over 5 MB or all files
   together would pass 50 MB, because every save rewrites them and each of the up to 50
@@ -66,13 +70,19 @@ right-click it and choose Open. Pushing a `v*` tag publishes both as a GitHub re
 
 **Saving and backups**
 
-- Autosave on every change. Writes are atomic (`.tmp` → fsync → rename), so a crash or a
-  pulled USB drive leaves the old file intact.
+- Autosave on every change, in the background: the window stays usable and the database
+  shows "Saving…" until the file is written. Writes are atomic (`.tmp` → fsync → rename),
+  so a crash or a pulled USB drive leaves the old file intact. Locking or quitting waits
+  for the save; if it fails, the window says so and offers Retry.
+- Every save encrypts the whole file (KDBX has no partial updates), so its time grows with
+  the file size: about 1.2 s for 13.7 MB in a debug build, plus the network write when the
+  file is on a share.
 - Every save also copies the file into a backup folder in the per-user app data directory:
   the newest 20 saves plus one per day for 30 days. The first save of each session first
   copies the file as it was on disk, so edits made by other apps are kept too.
-- Several databases can be open at once. On launch the last ones reopen; if a file is
-  missing (drive not connected) or the password is wrong, the unlock screen shows instead.
+- Several databases can be open at once; the sidebar then names the one the lists belong
+  to ("In …"). On launch the last ones reopen; if a file is missing (drive not connected)
+  or the password is wrong, the unlock screen shows instead.
 
 **Compatibility with other KeePass apps**
 

@@ -2,15 +2,16 @@
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
-// Every save re-encrypts the whole file (Argon2 key derivation), and unlocking derives the key
-// too: a second or two, longer on a USB drive. A call still running after 250 ms shows the
-// busy bar. Calls that wait on a native file dialog are left out, or the bar would run
-// while the user picks a file.
+// Unlocking reads and decrypts the whole file: a second or more for a large file, longer on a
+// network drive. Saves run in the background (the "saved" event reports the end). A call still
+// running after 250 ms shows the busy bar. Calls that wait on a native file dialog are left
+// out, or the bar would run while the user picks a file.
 const DIALOG_COMMANDS: Record<string, true> = {
   browse_open: true,
   browse_new: true,
   choose_keyfile: true,
   pick_attachment: true,
+  form_pick_files: true,
   save_attachment: true,
 };
 let pending = 0;
@@ -64,7 +65,10 @@ export interface UnlockView {
 export interface TabItem {
   name: string;
   path: string;
-  dirty: boolean;
+  /** A background save of this file is running. */
+  saving: boolean;
+  /** Changes not on disk and no save running: the last save failed. */
+  unsaved: boolean;
 }
 /** A folder in the sidebar: every group except the root and the Recycle Bin subtree. */
 export interface GroupItem {
@@ -216,9 +220,17 @@ export interface AboutInfo {
 }
 export interface FormData {
   mode: "add" | "edit";
+  /** Name of the database the entry belongs to, set when several are open. */
+  database: string | null;
   groups: FormGroup[];
   gen: GenOptions;
   entry: EntryForm;
+}
+/** Files chosen in the Add document form, attached when it is saved (sizes in bytes). */
+export interface FormFiles {
+  files: AttachmentInfo[];
+  attachmentsBytes: number;
+  fileBytes: number;
 }
 export interface Duplicate {
   id: Id;
@@ -287,9 +299,12 @@ export const api = {
 
   mainView: () => invoke<MainView>("main_view"),
   selectTab: (index: number) => invoke<MainView>("select_tab", { index }),
-  lockTab: (index: number) => invoke<MainView>("lock_tab", { index }),
+  /** Saves first; with `discard`, locks even when that save fails. */
+  lockTab: (index: number, discard: boolean) => invoke<MainView>("lock_tab", { index, discard }),
   selectFilter: (filter: Filter) => invoke<MainView>("select_filter", { filter }),
   addGroup: (parent: Id | null, name: string) => invoke<MainView>("add_group", { parent, name }),
+  renameGroup: (id: Id, name: string) => invoke<MainView>("rename_group", { id, name }),
+  changeMasterPassword: (current: string, next: string) => invoke<MainView>("change_master_password", { current, new: next }),
   setGroupColor: (id: Id, color: FolderColor | null) => invoke<MainView>("set_group_color", { id, color }),
   selectEntry: (id: Id) => invoke<MainView>("select_entry", { id }),
   search: (text: string) => invoke<MainView>("search", { text }),
@@ -316,6 +331,9 @@ export const api = {
   findDuplicate: (title: string, url: string, editing: Id | null) =>
     invoke<Duplicate | null>("find_duplicate", { title, url, editing }),
   formSave: (entry: EntryForm, replace: Id | null) => invoke<MainView>("form_save", { entry, replace }),
+  /** Native picker (several files at once); the files are attached when the form is saved. */
+  formPickFiles: () => invoke<FormFiles>("form_pick_files"),
+  formRemoveFile: (index: number) => invoke<FormFiles>("form_remove_file", { index }),
 
   settingsGet: () => invoke<SettingsView>("settings_get"),
   settingsSave: (settings: SettingsView) => invoke<void>("settings_save", { settings }),
@@ -331,6 +349,11 @@ export const api = {
 
 export function onToast(handler: (message: string) => void): Promise<UnlistenFn> {
   return listen<string>("toast", (event) => handler(event.payload));
+}
+
+/** A background save finished (or failed). */
+export function onSaved(handler: () => void): Promise<UnlistenFn> {
+  return listen("saved", () => handler());
 }
 
 export function onQuickOpen(handler: (payload: QuickOpen) => void): Promise<UnlistenFn> {

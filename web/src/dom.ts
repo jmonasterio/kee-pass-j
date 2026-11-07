@@ -194,6 +194,33 @@ export function button(
   );
 }
 
+/** Password box with a show/hide button at its end. */
+export function secretInput(placeholder: string): HTMLElementTagNameMap["fluent-text-input"] {
+  const input = el("fluent-text-input", {
+    type: "password",
+    placeholder,
+    autocomplete: "off",
+    attrs: { spellcheck: "false", autocomplete: "off" },
+  });
+  const toggle: HTMLElementTagNameMap["fluent-button"] = button(
+    null,
+    () => {
+      const shown = input.type === "password";
+      input.type = shown ? "text" : "password";
+      setChildren(toggle, icon(shown ? "eyeOff" : "eye"));
+      toggle.title = shown ? "Hide password" : "Show password";
+      toggle.setAttribute("aria-label", toggle.title);
+      input.focus();
+    },
+    { icon: "eye", appearance: "transparent", size: "small", title: "Show password", class: "reveal-toggle" },
+  );
+  toggle.setAttribute("slot", "end");
+  // Clicking the button must not take focus away from the text.
+  toggle.addEventListener("mousedown", (event) => event.preventDefault());
+  input.append(toggle);
+  return input;
+}
+
 /** Labelled form field wrapper around a single Fluent input. */
 export function field(label: string, input: HTMLElement, opts: { position?: "above" | "after" | "before"; class?: string } = {}): HTMLElementTagNameMap["fluent-field"] {
   input.setAttribute("slot", "input");

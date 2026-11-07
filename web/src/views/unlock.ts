@@ -1,20 +1,11 @@
 import { api, errorText, type RecentItem, type UnlockView } from "../api";
-import { button, el, field, icon, setChildren } from "../dom";
+import { button, el, field, icon, secretInput, setChildren } from "../dom";
 import { nav } from "../nav";
 
 let view: UnlockView | null = null;
 let selected: string | null = null;
 let passwordInput: HTMLElementTagNameMap["fluent-text-input"] | null = null;
 let submit: (() => void) | null = null;
-
-function secretInput(placeholder: string): HTMLElementTagNameMap["fluent-text-input"] {
-  return el("fluent-text-input", {
-    type: "password",
-    placeholder,
-    autocomplete: "off",
-    attrs: { spellcheck: "false", autocomplete: "off" },
-  });
-}
 
 export function renderUnlock(root: HTMLElement, next: UnlockView): void {
   // Keep a typed password when the page refreshes for the same database (e.g. after picking a key file).

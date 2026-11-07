@@ -3,10 +3,11 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
-use ourlogins::settings::{self, Settings};
+use ourlogins::settings::Settings;
 use ourlogins::vault::{EntryId, EntryView, GroupId, GroupView, Vault};
 
 use crate::biometric;
+use crate::saver;
 use crate::dto::*;
 
 /// What the account list shows when the search box is empty.
@@ -35,12 +36,18 @@ pub struct AppState {
     /// Path preselected on the unlock page.
     pub picker_selected: Option<PathBuf>,
     pub pending_new_db: Option<PathBuf>,
-    /// Tab whose last save failed, with the error text; Retry saves this one.
-    pub save_error: Option<(usize, String)>,
+    /// File whose last save failed, with the error text; Retry saves it again.
+    pub save_error: Option<(PathBuf, String)>,
+    /// Files with a background save running (see `saver`).
+    pub saving: Vec<PathBuf>,
+    /// Set during app setup; background saves need it.
+    pub app: Option<tauri::AppHandle>,
     /// Windows Hello / Touch ID, when this machine has it set up.
     pub quick_unlock: Option<biometric::Kind>,
     /// File picked by "Add file…", waiting for the user to confirm: (tab, entry, path).
     pub pending_attachment: Option<(usize, EntryId, PathBuf)>,
+    /// Files chosen in the open Add form; `form_save` attaches them.
+    pub form_files: Vec<PathBuf>,
 }
 
 pub struct Shared(pub Mutex<AppState>);
@@ -59,8 +66,11 @@ impl Shared {
             picker_selected,
             pending_new_db: None,
             save_error: None,
+            saving: Vec::new(),
+            app: None,
             quick_unlock: biometric::available(),
             pending_attachment: None,
+            form_files: Vec::new(),
         }))
     }
 
@@ -83,25 +93,12 @@ impl AppState {
         self.active_mut().ok_or_else(|| "No database is open.".to_string())
     }
 
-    /// Saves tab `tab`, recording or clearing the persistent error. Returns true on success.
-    pub fn save_tab(&mut self, tab: usize) -> bool {
-        let policy = settings::backup_policy();
-        let Some(db) = self.dbs.get_mut(tab) else { return true };
-        match db.vault.save(&policy) {
-            Ok(()) => {
-                if self.save_error.as_ref().is_some_and(|(t, _)| *t == tab) {
-                    self.save_error = None;
-                }
-                true
-            }
-            Err(e) => {
-                self.save_error = Some((tab, e.to_string()));
-                false
-            }
-        }
+    /// Saves tab `tab` in the background (see `saver::request`).
+    pub fn save_tab(&mut self, tab: usize) {
+        saver::request(self, tab);
     }
 
-    pub fn save_active(&mut self) -> bool {
+    pub fn save_active(&mut self) {
         self.save_tab(self.active_tab)
     }
 
@@ -162,10 +159,16 @@ impl AppState {
         let tabs = self
             .dbs
             .iter()
-            .map(|db| TabItem {
-                name: db.vault.name(),
-                path: db.vault.path().display().to_string(),
-                dirty: db.vault.is_dirty(),
+            .map(|db| {
+                let path = db.vault.path();
+                let saving = self.saving.iter().any(|p| p == path);
+                TabItem {
+                    name: db.vault.name(),
+                    path: path.display().to_string(),
+                    saving,
+                    // Changes waiting with no save running: the last save failed.
+                    unsaved: db.vault.is_dirty() && !saving,
+                }
             })
             .collect();
         let active_tab = self.active_tab;

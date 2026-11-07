@@ -81,10 +81,12 @@ export function promptDialog(opts: {
   subtitle?: string;
   label: string;
   placeholder?: string;
+  /** Text already in the field, selected (e.g. the current name when renaming). */
+  value?: string;
   confirm: string;
   submit: (text: string) => Promise<string | null>;
 }): void {
-  const input = el("fluent-text-input", { placeholder: opts.placeholder ?? "", attrs: { autofocus: true } });
+  const input = el("fluent-text-input", { placeholder: opts.placeholder ?? "", value: opts.value ?? "", attrs: { autofocus: true } });
   const error = el("div", { class: "form-error", attrs: { role: "alert" } });
   let busy = false;
   const submit = async () => {

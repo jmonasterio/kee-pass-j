@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::fs::{self, File};
-use std::io::{BufWriter, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Local, NaiveDate, NaiveDateTime, TimeZone, Utc};
@@ -73,6 +73,8 @@ pub enum VaultError {
     AttachmentNotFound(String),
     #[error("group name must not be empty")]
     EmptyGroupName,
+    #[error("there is already a folder called \"{0}\" here")]
+    DuplicateGroupName(String),
     #[error("the top group of a database cannot be deleted")]
     CannotDeleteRoot,
     #[error("this group holds the Recycle Bin; move the Recycle Bin out first")]
@@ -449,6 +451,11 @@ impl Vault {
         self.dirty
     }
 
+    /// True when `password` and `keyfile` make the key this vault was opened (or last re-keyed) with.
+    pub fn key_matches(&self, password: &str, keyfile: Option<&Path>) -> Result<bool, VaultError> {
+        Ok(build_key(password, keyfile)? == self.key)
+    }
+
     /// Replace the master key (KeePass "Change Master Key"). Marks the vault dirty; the
     /// next `save` re-encrypts the file with the new key. The backup copies written before
     /// this call keep the old key.
@@ -459,83 +466,35 @@ impl Vault {
         Ok(())
     }
 
-    /// Atomic write: `<path>.tmp` → fsync → rename over `<path>`. Then copy to backups and rotate.
-    /// A serialization failure leaves the existing file untouched.
+    /// Saves now: `start_save` followed by `SaveJob::run`. A failure leaves the existing file
+    /// untouched and the vault still marked as changed.
     pub fn save(&mut self, backups: &BackupPolicy) -> Result<(), VaultError> {
-        let tmp = tmp_path(&self.path);
-        if let Err(e) = self.write_tmp(&tmp) {
-            let _ = fs::remove_file(&tmp);
-            return Err(e);
-        }
-        if self.original_pending {
-            if let Err(e) = self.backup_original(backups) {
-                let _ = fs::remove_file(&tmp);
-                return Err(e);
-            }
-            self.original_pending = false;
-        }
-        let backup_target = backup_file_path(backups, &self.path, Local::now())?;
-        let mut backup_written = false;
-        if let Err(rename_err) = fs::rename(&tmp, &self.path) {
-            // Windows refuses the replacing rename while another process holds the file
-            // open without FILE_SHARE_DELETE. The backup copy is taken from the tmp file
-            // first so the new content exists on disk before the original is removed.
-            let recoverable = cfg!(windows) && self.path.exists();
-            if !recoverable {
-                let _ = fs::remove_file(&tmp);
-                return Err(io_err(&self.path, rename_err));
-            }
-            copy_backup(&tmp, &backup_target)?;
-            backup_written = true;
-            if let Err(e) = fs::remove_file(&self.path).and_then(|_| fs::rename(&tmp, &self.path)) {
-                return Err(io_err(&self.path, e));
-            }
-        }
-        #[cfg(unix)]
-        if let Some(dir) = self.path.parent() {
-            if let Ok(d) = File::open(dir) {
-                let _ = d.sync_all();
-            }
-        }
-        self.dirty = false;
-        if !backup_written {
-            copy_backup(&self.path, &backup_target)?;
-        }
-        rotate_backups_at(backups, &self.path, Local::now())?;
-        Ok(())
+        let job = self.start_save();
+        let original = job.backup_original;
+        job.run(backups).inspect_err(|_| self.save_failed(original))
     }
 
-    /// Copies the file currently on disk into the backup folder before the session's first
-    /// save replaces it. The copy is named after the file's modification time and rotates
-    /// like any other backup. A file opened as KDBX 3.1 also gets
-    /// `<stem>-kdbx3-original.kdbx`, which rotation never deletes; it is written once.
-    fn backup_original(&self, backups: &BackupPolicy) -> Result<(), VaultError> {
-        let Ok(meta) = fs::metadata(&self.path) else {
-            return Ok(()); // nothing on disk yet
+    /// Takes a copy of the database for saving and marks the vault saved. The slow part,
+    /// `SaveJob::run`, needs no access to the vault, so edits can continue meanwhile. If the
+    /// job fails, call `save_failed` with `SaveJob::backs_up_original`.
+    pub fn start_save(&mut self) -> SaveJob {
+        let job = SaveJob {
+            db: self.db.clone(),
+            key: self.key.clone(),
+            path: self.path.clone(),
+            backup_original: self.original_pending,
+            upgraded_from_kdbx3: self.upgraded_from_kdbx3,
         };
-        let mtime: DateTime<Local> = meta.modified().map(DateTime::from).unwrap_or_else(|_| Local::now());
-        copy_backup(&self.path, &backup_file_path(backups, &self.path, mtime)?)?;
-        if self.upgraded_from_kdbx3 {
-            let (dir, stem) = backup_subdir(backups, &self.path)?;
-            let keep = dir.join(format!("{stem}-kdbx3-original.{BACKUP_EXT}"));
-            if !keep.exists() {
-                copy_backup(&self.path, &keep)?;
-            }
-        }
-        Ok(())
+        self.dirty = false;
+        self.original_pending = false;
+        job
     }
 
-    fn write_tmp(&self, tmp: &Path) -> Result<(), VaultError> {
-        let file = File::create(tmp).map_err(|e| io_err(tmp, e))?;
-        let mut writer = BufWriter::new(file);
-        self.db.save(&mut writer, self.key.clone())?;
-        writer.flush().map_err(|e| io_err(tmp, e))?;
-        writer
-            .into_inner()
-            .map_err(|e| io_err(tmp, e.into_error()))?
-            .sync_all()
-            .map_err(|e| io_err(tmp, e))?;
-        Ok(())
+    /// A job from `start_save` failed: its changes still need saving, and the copy of the
+    /// file as it was on disk is still owed if that job was to make it.
+    pub fn save_failed(&mut self, backed_up_original: bool) {
+        self.dirty = true;
+        self.original_pending |= backed_up_original;
     }
 
     pub fn root(&self) -> GroupId {
@@ -855,11 +814,25 @@ impl Vault {
         self.db.iter_all_attachments().map(|a| a.data.get().len() as u64).sum()
     }
 
+    /// Fails when a sibling folder already has this name (ignoring case), so two folders
+    /// with the same name never sit side by side.
+    fn check_group_name(&self, parent: db::GroupId, name: &str, except: Option<db::GroupId>) -> Result<(), VaultError> {
+        let p = self.db.group(parent).ok_or(VaultError::GroupNotFound(parent.into()))?;
+        let taken = p.group_ids().filter(|c| Some(*c) != except).any(|c| {
+            self.db.group(c).is_some_and(|g| g.name.trim().to_lowercase() == name.to_lowercase())
+        });
+        if taken {
+            return Err(VaultError::DuplicateGroupName(name.to_owned()));
+        }
+        Ok(())
+    }
+
     pub fn add_group(&mut self, parent: GroupId, name: &str) -> Result<GroupId, VaultError> {
         let name = name.trim();
         if name.is_empty() {
             return Err(VaultError::EmptyGroupName);
         }
+        self.check_group_name(parent.into(), name, None)?;
         let mut p = self
             .db
             .group_mut(parent.into())
@@ -876,7 +849,14 @@ impl Vault {
         if name.is_empty() {
             return Err(VaultError::EmptyGroupName);
         }
+        let parent = self.db.group(id.into()).ok_or(VaultError::GroupNotFound(id))?.parent().map(|p| p.id());
+        if let Some(parent) = parent {
+            self.check_group_name(parent, name, Some(id.into()))?;
+        }
         let mut g = self.db.group_mut(id.into()).ok_or(VaultError::GroupNotFound(id))?;
+        if g.name == name {
+            return Ok(());
+        }
         g.name = name.to_owned();
         g.times.last_modification = Some(Times::now());
         self.dirty = true;
@@ -1069,16 +1049,113 @@ fn backup_file_path(policy: &BackupPolicy, db_path: &Path, at: DateTime<Local>) 
     Ok(dir.join(format!("{}-{}.{}", stem, at.format("%Y%m%d-%H%M%S"), BACKUP_EXT)))
 }
 
-fn copy_backup(from: &Path, to: &Path) -> Result<(), VaultError> {
-    let backup_err = |e: std::io::Error| VaultError::Backup {
-        path: to.to_path_buf(),
-        source: e,
-    };
-    if let Some(dir) = to.parent() {
-        fs::create_dir_all(dir).map_err(backup_err)?;
+/// A copy of a vault taken by `Vault::start_save`; `run` writes it.
+pub struct SaveJob {
+    db: Database,
+    key: DatabaseKey,
+    path: PathBuf,
+    backup_original: bool,
+    upgraded_from_kdbx3: bool,
+}
+
+impl SaveJob {
+    pub fn path(&self) -> &Path {
+        &self.path
     }
-    fs::copy(from, to).map_err(backup_err)?;
+
+    /// Pass to `Vault::save_failed` when `run` fails.
+    pub fn backs_up_original(&self) -> bool {
+        self.backup_original
+    }
+
+    /// Encrypts once into memory, then writes `<path>.tmp` → fsync → rename over `<path>`,
+    /// and the same bytes into the backup folder, so the file is never read back (a full
+    /// read on a network drive costs as much as the write). Rotates the backups.
+    /// A failure before the rename leaves the existing file untouched.
+    pub fn run(self, backups: &BackupPolicy) -> Result<(), VaultError> {
+        let mut bytes = Vec::new();
+        self.db.save(&mut bytes, self.key.clone())?;
+        let tmp = tmp_path(&self.path);
+        let staged = write_synced(&tmp, &bytes).and_then(|()| {
+            if self.backup_original {
+                backup_original(backups, &self.path, self.upgraded_from_kdbx3)?;
+            }
+            Ok(())
+        });
+        if let Err(e) = staged {
+            let _ = fs::remove_file(&tmp);
+            return Err(e);
+        }
+        let backup_target = backup_file_path(backups, &self.path, Local::now())?;
+        if let Err(rename_err) = fs::rename(&tmp, &self.path) {
+            // Windows refuses the replacing rename while another process holds the file
+            // open without FILE_SHARE_DELETE. The backup is written first so the new content
+            // exists outside the tmp file before the original is removed.
+            let recoverable = cfg!(windows) && self.path.exists();
+            if !recoverable {
+                let _ = fs::remove_file(&tmp);
+                return Err(io_err(&self.path, rename_err));
+            }
+            write_backup(&bytes, &backup_target)?;
+            fs::remove_file(&self.path)
+                .and_then(|_| fs::rename(&tmp, &self.path))
+                .map_err(|e| io_err(&self.path, e))?;
+        } else {
+            write_backup(&bytes, &backup_target)?;
+        }
+        #[cfg(unix)]
+        if let Some(dir) = self.path.parent() {
+            if let Ok(d) = File::open(dir) {
+                let _ = d.sync_all();
+            }
+        }
+        rotate_backups_at(backups, &self.path, Local::now())?;
+        Ok(())
+    }
+}
+
+fn write_synced(path: &Path, bytes: &[u8]) -> Result<(), VaultError> {
+    let mut file = File::create(path).map_err(|e| io_err(path, e))?;
+    file.write_all(bytes).and_then(|()| file.sync_all()).map_err(|e| io_err(path, e))
+}
+
+/// Copies the file currently on disk into the backup folder before the session's first
+/// save replaces it, so edits made by other apps are kept. The copy is named after the
+/// file's modification time and rotates like any other backup. A file opened as KDBX 3.1
+/// also gets `<stem>-kdbx3-original.kdbx`, which rotation never deletes; it is written once.
+fn backup_original(backups: &BackupPolicy, path: &Path, upgraded_from_kdbx3: bool) -> Result<(), VaultError> {
+    let Ok(meta) = fs::metadata(path) else {
+        return Ok(()); // nothing on disk yet
+    };
+    let mtime: DateTime<Local> = meta.modified().map(DateTime::from).unwrap_or_else(|_| Local::now());
+    copy_backup(path, &backup_file_path(backups, path, mtime)?)?;
+    if upgraded_from_kdbx3 {
+        let (dir, stem) = backup_subdir(backups, path)?;
+        let keep = dir.join(format!("{stem}-kdbx3-original.{BACKUP_EXT}"));
+        if !keep.exists() {
+            copy_backup(path, &keep)?;
+        }
+    }
     Ok(())
+}
+
+fn backup_err(to: &Path) -> impl Fn(std::io::Error) -> VaultError + '_ {
+    move |e| VaultError::Backup { path: to.to_path_buf(), source: e }
+}
+
+fn copy_backup(from: &Path, to: &Path) -> Result<(), VaultError> {
+    if let Some(dir) = to.parent() {
+        fs::create_dir_all(dir).map_err(backup_err(to))?;
+    }
+    fs::copy(from, to).map_err(backup_err(to))?;
+    Ok(())
+}
+
+fn write_backup(bytes: &[u8], to: &Path) -> Result<(), VaultError> {
+    if let Some(dir) = to.parent() {
+        fs::create_dir_all(dir).map_err(backup_err(to))?;
+    }
+    fs::write(to, bytes).map_err(backup_err(to))
 }
 
 /// Timestamp parsed from `<stem>-YYYYMMDD-HHMMSS.kdbx`.
@@ -1371,6 +1448,13 @@ mod tests {
         v.rename_group(sub, "Renamed").unwrap();
         assert!(v.groups().iter().any(|g| g.id == sub && g.name == "Renamed"));
         assert!(matches!(v.add_group(root, "  "), Err(VaultError::EmptyGroupName)));
+        // Sibling names are unique ignoring case; the same name under another parent is fine,
+        // and renaming a folder to its own name (or a case change of it) is allowed.
+        assert!(matches!(v.add_group(root, " renamed "), Err(VaultError::DuplicateGroupName(_))));
+        let other = v.add_group(root, "Other").unwrap();
+        assert!(matches!(v.rename_group(other, "RENAMED"), Err(VaultError::DuplicateGroupName(_))));
+        v.add_group(sub, "Other").unwrap();
+        v.rename_group(sub, "RENAMED").unwrap();
         assert!(matches!(v.upsert_entry(edit(GroupId(uuid::Uuid::new_v4()), "x")), Err(VaultError::GroupNotFound(_))));
     }
 
