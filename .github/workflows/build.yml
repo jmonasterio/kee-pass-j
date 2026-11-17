@@ -26,17 +26,17 @@ jobs:
         run: |
           npm ci
           npm run check
-      - name: Bundle universal "Our Logins.app"
+      - name: Bundle universal "Our Logins.app" and DMG
         # beforeBuildCommand (npm run build) runs inside tauri build; ad-hoc signed via bundle.macOS.signingIdentity "-".
-        run: npx tauri build --target universal-apple-darwin --bundles app
-      - name: Zip
+        run: npx tauri build --target universal-apple-darwin --bundles app,dmg
+      - name: Stable name
         run: |
           mkdir -p dist
-          ditto -c -k --keepParent "target/universal-apple-darwin/release/bundle/macos/Our Logins.app" dist/OurLogins-macos-universal.zip
+          cp target/universal-apple-darwin/release/bundle/dmg/*.dmg dist/OurLogins-macos-universal.dmg
       - uses: actions/upload-artifact@v4
         with:
           name: OurLogins-macos-universal
-          path: dist/OurLogins-macos-universal.zip
+          path: dist/OurLogins-macos-universal.dmg
 
   windows:
     runs-on: windows-latest
@@ -112,7 +112,7 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/OurLogins-macos-universal/OurLogins-macos-universal.zip
+            dist/OurLogins-macos-universal/OurLogins-macos-universal.dmg
             dist/OurLogins-windows-x64/OurLogins-windows-x64.exe
             dist/OurLogins-linux-x86_64/OurLogins-linux-x86_64.AppImage
             dist/OurLogins-linux-x86_64/OurLogins-linux-amd64.deb
