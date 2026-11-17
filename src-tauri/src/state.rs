@@ -2,6 +2,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
+use std::time::SystemTime;
 
 use ourlogins::settings::Settings;
 use ourlogins::vault::{EntryId, EntryView, GroupId, GroupView, Vault};
@@ -26,6 +27,18 @@ pub struct OpenDb {
     pub selected_entry: Option<EntryId>,
 }
 
+/// The last save from the details pane, which its Undo can take back.
+pub struct LastSave {
+    pub path: PathBuf,
+    /// The entry as that save left it; Undo is refused once it has changed.
+    pub saved: EntryView,
+    /// The save created the entry (Undo deletes it); otherwise Undo restores its newest
+    /// history version.
+    pub created: bool,
+    /// The entry the save marked not working ("Replace").
+    pub replaced: Option<EntryId>,
+}
+
 pub struct AppState {
     pub settings: Settings,
     pub dbs: Vec<OpenDb>,
@@ -44,10 +57,18 @@ pub struct AppState {
     pub app: Option<tauri::AppHandle>,
     /// Windows Hello / Touch ID, when this machine has it set up.
     pub quick_unlock: Option<biometric::Kind>,
-    /// File picked by "Add file…", waiting for the user to confirm: (tab, entry, path).
-    pub pending_attachment: Option<(usize, EntryId, PathBuf)>,
-    /// Files chosen in the open Add form; `form_save` attaches them.
-    pub form_files: Vec<PathBuf>,
+    /// Files picked for the draft in the details pane; `draft_save` attaches them.
+    pub draft_files: Vec<PathBuf>,
+    /// The details pane has unsaved edits: closing the window asks the page first.
+    pub draft_pending: bool,
+    pub last_save: Option<LastSave>,
+    /// Last use of the app (input in a window, Auto-Type, Quick Access, a copy); auto-lock
+    /// counts from here.
+    pub last_activity: SystemTime,
+    /// An auto-lock asked the page to lock (see `autolock`), with its number; cleared once
+    /// everything is locked.
+    pub auto_lock_pending: Option<u64>,
+    pub auto_lock_seq: u64,
 }
 
 pub struct Shared(pub Mutex<AppState>);
@@ -56,7 +77,9 @@ impl Shared {
     pub fn new() -> Shared {
         let settings = Settings::load();
         let picker: Vec<PathBuf> = settings.recent.iter().map(|r| r.path.clone()).collect();
-        let picker_selected = if settings.reopen_last { picker.first().cloned() } else { None };
+        // Startup selects the most recent database that still exists, so the password box
+        // can take typing at once.
+        let picker_selected = if settings.reopen_last { picker.iter().find(|p| p.exists()).cloned() } else { None };
         Shared(Mutex::new(AppState {
             settings,
             dbs: Vec::new(),
@@ -69,8 +92,12 @@ impl Shared {
             saving: Vec::new(),
             app: None,
             quick_unlock: biometric::available(),
-            pending_attachment: None,
-            form_files: Vec::new(),
+            draft_files: Vec::new(),
+            draft_pending: false,
+            last_save: None,
+            last_activity: SystemTime::now(),
+            auto_lock_pending: None,
+            auto_lock_seq: 0,
         }))
     }
 
@@ -81,6 +108,11 @@ impl Shared {
 }
 
 impl AppState {
+    /// The app was used just now: auto-lock starts counting again.
+    pub fn note_activity(&mut self) {
+        self.last_activity = SystemTime::now();
+    }
+
     pub fn active(&self) -> Option<&OpenDb> {
         self.dbs.get(self.active_tab)
     }
@@ -171,6 +203,7 @@ impl AppState {
                     saving,
                     // Changes waiting with no save running: the last save failed.
                     unsaved: db.vault.is_dirty() && !saving,
+                    history_max_items: db.vault.history_max_items(),
                 }
             })
             .collect();
@@ -190,7 +223,6 @@ impl AppState {
                 notes_monospace,
                 recycle_bin_enabled: true,
                 tile_colors,
-                storage: Storage { attachments_bytes: 0, file_bytes: 0 },
             };
         };
 
@@ -273,10 +305,6 @@ impl AppState {
             notes_monospace,
             recycle_bin_enabled: db.vault.recycle_bin_enabled(),
             tile_colors,
-            storage: Storage {
-                attachments_bytes: db.vault.attachments_total_bytes(),
-                file_bytes: std::fs::metadata(db.vault.path()).map(|m| m.len()).unwrap_or(0),
-            },
         }
     }
 }
@@ -414,6 +442,9 @@ fn entry_detail(vault: &Vault, e: &EntryView, groups: &[GroupView], folders: &[G
             })
             .collect(),
         document: e.document,
+        autotype_sequence: e.autotype_sequence.clone().unwrap_or_default(),
+        autotype_windows: e.autotype_windows.clone(),
+        history_count: vault.history_len(e.id),
     }
 }
 

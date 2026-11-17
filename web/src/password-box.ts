@@ -20,7 +20,7 @@ function showToggleState(toggle: ButtonEl, shown: boolean): void {
   toggle.setAttribute("aria-label", toggle.title);
 }
 
-/** A password box, hidden until its eye button is clicked. `large` is the bigger font used in the account form. */
+/** A password box, hidden until its eye button is clicked. `large` is the bigger font used when editing an entry's password. */
 export function passwordBox(opts: { value?: string; placeholder?: string; large?: boolean } = {}): TextInputEl {
   const input = el("fluent-text-input", {
     class: "password-box" + (opts.large ? " large" : ""),

@@ -4,7 +4,7 @@
 //! `URL`, `Notes`. Application fields are plain KDBX custom strings:
 //! `KPJ_Stale`, `Recovery PIN` (protected), `Recovery Phone`, `Security Questions` (protected).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::fs::{self, File};
 use std::io::Write;
@@ -71,6 +71,12 @@ pub enum VaultError {
     GroupNotFound(GroupId),
     #[error("attachment {0:?} not found")]
     AttachmentNotFound(String),
+    #[error("entry {0} has no earlier version")]
+    NoEarlierVersion(EntryId),
+    #[error("the folder that version of entry {0} was in no longer exists")]
+    VersionFolderGone(EntryId),
+    #[error("could not keep {0:?} for the entry's history")]
+    AttachmentNotKept(String),
     #[error("group name must not be empty")]
     EmptyGroupName,
     #[error("there is already a folder called \"{0}\" here")]
@@ -205,6 +211,10 @@ pub struct EntryEdit {
     pub autotype_sequence: Option<String>,
     pub autotype_windows: Vec<String>,
     pub document: bool,
+    /// Files to attach in the same change (name, bytes); a name the entry already has is replaced.
+    pub attach: Vec<(String, Vec<u8>)>,
+    /// Attachment names to remove in the same change (before `attach` is applied).
+    pub detach: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -284,6 +294,12 @@ fn to_utc(t: Option<NaiveDateTime>) -> DateTime<Utc> {
 }
 
 fn entry_view(e: &db::EntryRef<'_>) -> EntryView {
+    entry_view_in(e, e.parent().id().into())
+}
+
+/// `entry_view` with the folder given: for history versions, whose own folder keepass reads
+/// with `unwrap` (it may have been deleted since).
+fn entry_view_in(e: &db::EntryRef<'_>, group: GroupId) -> EntryView {
     let get = |k: &str| e.get(k).unwrap_or_default().to_owned();
     let mut custom: Vec<CustomField> = e
         .fields
@@ -307,7 +323,7 @@ fn entry_view(e: &db::EntryRef<'_>) -> EntryView {
     };
     EntryView {
         id: e.id().into(),
-        group: e.parent().id().into(),
+        group,
         title: get(fields::TITLE),
         username: get(fields::USERNAME),
         password: get(fields::PASSWORD),
@@ -362,6 +378,167 @@ fn trim_history(db: &mut Database, id: db::EntryId, max: usize) {
     }
     entry.history = Some(trimmed);
     db.remove_unused_attachments();
+}
+
+/// Takes `names` off the live entry `e` while their data stays in the database, under the
+/// same attachment ids, for the history versions that use them.
+///
+/// keepass 0.17 deletes an attachment's data as soon as the live entry lets go of it:
+/// `remove_attachment_by_name`, and `add_attachment` over a name the entry has, drop every
+/// reference of the entry, history versions included, and then the attachment. So each file
+/// is put back under its old id (`add_attachment` takes the lowest free id; the free ids
+/// below it are filled first) and the entry is set back to its state without those files.
+/// The caller then rebuilds the references with `remove_unused_attachments`, once the new
+/// history version is in place; that also drops the fillers.
+fn detach_keeping_data(e: &mut db::EntryMut<'_>, names: &[&String]) -> Result<(), VaultError> {
+    for &name in names {
+        let Some((old_id, data)) = e.as_ref().attachment_by_name(name).map(|a| (a.id(), a.data.clone())) else { continue };
+        e.remove_attachment_by_name(name);
+        let without: Entry = (**e).clone();
+        let used: HashSet<usize> = e.database_mut().iter_all_attachments().map(|a| a.id().id()).collect();
+        for free in (0..old_id.id()).filter(|i| !used.contains(i)) {
+            e.add_attachment(format!("ourlogins-filler-{free}"), Value::unprotected(Vec::new()));
+        }
+        let back = e.add_attachment(format!("ourlogins-kept-{}", old_id.id()), data).id();
+        if back != old_id {
+            return Err(VaultError::AttachmentNotKept(name.clone()));
+        }
+        **e = without;
+    }
+    Ok(())
+}
+
+/// The folder history version `index` was in, if it still exists. keepass reads a version's
+/// folder with `unwrap`, which panics for a folder deleted since; that panic is caught.
+fn version_folder(entry: &db::EntryRef<'_>, index: usize) -> Option<db::GroupId> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| entry.historical(index).map(|h| h.parent().id())))
+        .ok()
+        .flatten()
+}
+
+/// File names (sorted) with their attachment ids: the same name with another id is a
+/// replaced file.
+fn files_of(e: &db::EntryRef<'_>) -> Vec<(String, usize)> {
+    let mut files: Vec<(String, usize)> = e.attachments_named().map(|(n, a)| (n.to_owned(), a.id().id())).collect();
+    files.sort();
+    files
+}
+
+/// An earlier version of an entry (see `Vault::versions`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VersionInfo {
+    pub modified: DateTime<Utc>,
+    /// What the next newer version (or the current one) changed, e.g. "password, website
+    /// changed", "file added: scan.pdf".
+    pub changes: Vec<String>,
+}
+
+/// One difference between two versions of an entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Change {
+    /// A standard field: its key in the page, and its name for people.
+    Field(&'static str, &'static str),
+    CustomAdded(String),
+    CustomRemoved(String),
+    CustomChanged(String),
+    FileAdded(String),
+    FileRemoved(String),
+    FileReplaced(String),
+    /// Marked not working (`true`) or working.
+    Stale(bool),
+    /// Made a document (`true`) or an account.
+    Document(bool),
+}
+
+impl Change {
+    /// The pane's key for the field this changes ("custom:<name>", "files" for any file).
+    fn key(&self) -> String {
+        match self {
+            Change::Field(key, _) => (*key).to_owned(),
+            Change::CustomAdded(k) | Change::CustomRemoved(k) | Change::CustomChanged(k) => format!("custom:{k}"),
+            Change::FileAdded(_) | Change::FileRemoved(_) | Change::FileReplaced(_) => "files".to_owned(),
+            Change::Stale(_) => "stale".to_owned(),
+            Change::Document(_) => "document".to_owned(),
+        }
+    }
+}
+
+type Version = (EntryView, Vec<(String, usize)>);
+
+/// What changed from `old` to `new`.
+fn changes(old: &Version, new: &Version) -> Vec<Change> {
+    let (o, n) = (&old.0, &new.0);
+    let fields = [
+        ("title", "name", o.title != n.title),
+        ("username", "username", o.username != n.username),
+        ("password", "password", o.password != n.password),
+        ("url", "website", o.url != n.url),
+        ("recoveryPin", "recovery PIN", o.recovery_pin != n.recovery_pin),
+        ("recoveryPhone", "recovery phone", o.recovery_phone != n.recovery_phone),
+        ("securityQuestions", "security questions", o.security_questions != n.security_questions),
+        ("notes", if n.document { "text" } else { "notes" }, o.notes != n.notes),
+        ("tags", "tags", o.tags != n.tags),
+        ("autotypeSequence", "Auto-Type sequence", o.autotype_sequence != n.autotype_sequence),
+        ("autotypeWindows", "Auto-Type windows", o.autotype_windows != n.autotype_windows),
+    ];
+    let mut out: Vec<Change> = fields.iter().filter(|f| f.2).map(|f| Change::Field(f.0, f.1)).collect();
+    for c in &n.custom {
+        match o.custom.iter().find(|x| x.key == c.key) {
+            None => out.push(Change::CustomAdded(c.key.clone())),
+            Some(x) if x != c => out.push(Change::CustomChanged(c.key.clone())),
+            Some(_) => {}
+        }
+    }
+    out.extend(o.custom.iter().filter(|c| !n.custom.iter().any(|x| x.key == c.key)).map(|c| Change::CustomRemoved(c.key.clone())));
+    for (name, id) in &new.1 {
+        match old.1.iter().find(|(n, _)| n == name) {
+            None => out.push(Change::FileAdded(name.clone())),
+            Some((_, old_id)) if old_id != id => out.push(Change::FileReplaced(name.clone())),
+            Some(_) => {}
+        }
+    }
+    out.extend(old.1.iter().filter(|(name, _)| !new.1.iter().any(|(n, _)| n == name)).map(|(name, _)| Change::FileRemoved(name.clone())));
+    if o.stale != n.stale {
+        out.push(Change::Stale(n.stale));
+    }
+    if o.document != n.document {
+        out.push(Change::Document(n.document));
+    }
+    out
+}
+
+/// Lines for the version list: "password, website changed", "file added: scan.pdf".
+fn describe_changes(changes: &[Change]) -> Vec<String> {
+    let changed: Vec<String> = changes
+        .iter()
+        .filter_map(|c| match c {
+            Change::Field(_, name) => Some((*name).to_owned()),
+            Change::CustomChanged(key) => Some(format!("\"{key}\"")),
+            _ => None,
+        })
+        .collect();
+    let mut out = Vec::new();
+    if !changed.is_empty() {
+        out.push(format!("{} changed", changed.join(", ")));
+    }
+    for c in changes {
+        match c {
+            Change::CustomAdded(k) => out.push(format!("field added: {k}")),
+            Change::CustomRemoved(k) => out.push(format!("field removed: {k}")),
+            Change::FileAdded(n) => out.push(format!("file added: {n}")),
+            Change::FileRemoved(n) => out.push(format!("file removed: {n}")),
+            Change::FileReplaced(n) => out.push(format!("file replaced: {n}")),
+            Change::Stale(true) => out.push("marked not working".to_owned()),
+            Change::Stale(false) => out.push("marked working".to_owned()),
+            Change::Document(true) => out.push("made a document".to_owned()),
+            Change::Document(false) => out.push("made an account".to_owned()),
+            Change::Field(..) | Change::CustomChanged(_) => {}
+        }
+    }
+    if out.is_empty() {
+        out.push("no field changes".to_owned());
+    }
+    out
 }
 
 impl Vault {
@@ -660,8 +837,9 @@ impl Vault {
     }
 
     /// Creates or updates an entry. Sets dirty; creation time on insert, modification time
-    /// on every call. Updates keep the previous version in the entry history.
-    pub fn upsert_entry(&mut self, edit: EntryEdit) -> Result<EntryId, VaultError> {
+    /// on every call. Updates keep the previous version in the entry history: one version for
+    /// the whole edit, attachments added and removed included.
+    pub fn upsert_entry(&mut self, mut edit: EntryEdit) -> Result<EntryId, VaultError> {
         let group: db::GroupId = edit.group.into();
         if self.db.group(group).is_none() {
             return Err(VaultError::GroupNotFound(edit.group));
@@ -669,18 +847,34 @@ impl Vault {
         let id: db::EntryId = match edit.id {
             Some(id) => {
                 let id: db::EntryId = id.into();
-                if self.db.entry(id).is_none() {
-                    return Err(VaultError::EntryNotFound(id.into()));
+                let existing = self.db.entry(id).ok_or(VaultError::EntryNotFound(id.into()))?;
+                if let Some(missing) = edit.detach.iter().find(|n| existing.attachment_by_name(n).is_none()) {
+                    return Err(VaultError::AttachmentNotFound(missing.clone()));
                 }
                 id
             }
-            None => self.db.group_mut(group).map(|mut g| g.add_entry().id()).ok_or(VaultError::GroupNotFound(edit.group))?,
+            None => {
+                if let Some(missing) = edit.detach.first() {
+                    return Err(VaultError::AttachmentNotFound(missing.clone()));
+                }
+                self.db.group_mut(group).map(|mut g| g.add_entry().id()).ok_or(VaultError::GroupNotFound(edit.group))?
+            }
         };
+        let attach = std::mem::take(&mut edit.attach);
         let mut entry = self.db.entry_mut(id).ok_or(VaultError::EntryNotFound(id.into()))?;
         let is_update = edit.id.is_some();
         let mut tracked = entry.track_changes();
         {
             let mut e = tracked.as_mut();
+            // Files removed, or replaced under the same name, stay in the database for the
+            // history version this edit creates (and older ones).
+            let replaced: Vec<String> = attach
+                .iter()
+                .filter(|(n, _)| e.as_ref().attachment_by_name(n).is_some())
+                .map(|(n, _)| n.clone())
+                .collect();
+            let dropped: Vec<&String> = edit.detach.iter().chain(&replaced).collect();
+            detach_keeping_data(&mut e, &dropped)?;
             if e.parent_mut().id() != group {
                 e.move_to(group).map_err(|_| VaultError::GroupNotFound(edit.group))?;
                 e.times.location_changed = Some(Times::now());
@@ -731,12 +925,19 @@ impl Vault {
                 .collect();
             e.autotype = Some(at);
 
+            for (name, bytes) in attach {
+                e.add_attachment(name, Value::protected(bytes));
+            }
+
             let now = Times::now();
             e.times.last_modification = Some(now);
             e.times.last_access = Some(now);
         }
         drop(tracked);
         if is_update {
+            // Rebuilds the attachment references (history versions now use the detached
+            // files) and drops what nothing uses.
+            self.db.remove_unused_attachments();
             let max = self
                 .db
                 .meta
@@ -764,16 +965,159 @@ impl Vault {
             .map(|e| e.parent().id())
             .ok_or(VaultError::EntryNotFound(id))?;
         if !self.recycle_bin_enabled() || self.in_recycle_bin(parent) {
-            let mut entry = self.db.entry_mut(kid).ok_or(VaultError::EntryNotFound(id))?;
-            entry.track_changes().remove();
-        } else {
-            let bin = self.ensure_recycle_bin();
-            let mut entry = self.db.entry_mut(kid).ok_or(VaultError::EntryNotFound(id))?;
-            entry.move_to(bin).map_err(|_| VaultError::GroupNotFound(bin.into()))?;
-            entry.times.location_changed = Some(Times::now());
+            return self.remove_entry(id);
         }
+        let bin = self.ensure_recycle_bin();
+        let mut entry = self.db.entry_mut(kid).ok_or(VaultError::EntryNotFound(id))?;
+        entry.move_to(bin).map_err(|_| VaultError::GroupNotFound(bin.into()))?;
+        entry.times.location_changed = Some(Times::now());
         self.dirty = true;
         Ok(())
+    }
+
+    /// Deletes an entry for good, wherever it is (undoing the creation of a new entry).
+    pub fn remove_entry(&mut self, id: EntryId) -> Result<(), VaultError> {
+        let mut entry = self.db.entry_mut(id.into()).ok_or(VaultError::EntryNotFound(id))?;
+        entry.track_changes().remove();
+        self.dirty = true;
+        Ok(())
+    }
+
+    /// Puts history version `index` (0 = the newest) back (KeePass "Restore"). The current
+    /// version goes into the history first, so nothing is lost. With `keep_folder` the entry
+    /// stays in the folder it is in now; otherwise it goes back to the folder that version was
+    /// in (Undo of a save that moved it), which must still exist.
+    pub fn restore_version(&mut self, id: EntryId, index: usize, keep_folder: bool) -> Result<(), VaultError> {
+        let kid: db::EntryId = id.into();
+        let (previous, version_folder) = {
+            let entry = self.db.entry(kid).ok_or(VaultError::EntryNotFound(id))?;
+            let previous = entry.history.as_ref().and_then(|h| h.get_entries().get(index)).cloned().ok_or(VaultError::NoEarlierVersion(id))?;
+            (previous, version_folder(&entry, index))
+        };
+        // The version's own record names its folder, so the entry passes through it.
+        let version_folder = version_folder.ok_or(VaultError::VersionFolderGone(id))?;
+        let mut entry = self.db.entry_mut(kid).ok_or(VaultError::EntryNotFound(id))?;
+        let mut tracked = entry.track_changes();
+        let current_folder = tracked.as_mut().parent_mut().id();
+        let moved = !keep_folder && current_folder != version_folder;
+        if moved {
+            tracked.move_to(version_folder).map_err(|_| VaultError::GroupNotFound(version_folder.into()))?;
+        }
+        let mut restored = previous;
+        restored.history = tracked.history.take();
+        let now = Times::now();
+        restored.times.last_modification = Some(now);
+        if moved {
+            restored.times.location_changed = Some(now);
+        }
+        *tracked = restored;
+        if keep_folder && current_folder != version_folder {
+            // The restored record says `version_folder`; the entry is listed in `current_folder`.
+            tracked.as_mut().move_to(current_folder).map_err(|_| VaultError::GroupNotFound(current_folder.into()))?;
+        }
+        drop(tracked);
+        let max = self.history_max_items();
+        trim_history(&mut self.db, kid, max);
+        // The entry now uses the old version's attachments again; rebuild the references.
+        self.db.remove_unused_attachments();
+        self.dirty = true;
+        Ok(())
+    }
+
+    /// Deletes history version `index` (0 = the newest). Files only that version used go.
+    pub fn delete_version(&mut self, id: EntryId, index: usize) -> Result<(), VaultError> {
+        let mut entry = self.db.entry_mut(id.into()).ok_or(VaultError::EntryNotFound(id))?;
+        let versions = entry.history.as_ref().map(|h| h.get_entries().clone()).unwrap_or_default();
+        if index >= versions.len() {
+            return Err(VaultError::NoEarlierVersion(id));
+        }
+        let mut history = History::default();
+        // `add_entry` puts each version first: add the oldest first.
+        for (_, version) in versions.into_iter().enumerate().rev().filter(|(i, _)| *i != index) {
+            history.add_entry(version);
+        }
+        entry.history = Some(history);
+        self.db.remove_unused_attachments();
+        self.dirty = true;
+        Ok(())
+    }
+
+    /// Number of earlier versions kept for the entry.
+    pub fn history_len(&self, id: EntryId) -> usize {
+        self.db
+            .entry(id.into())
+            .and_then(|e| e.history.as_ref().map(|h| h.get_entries().len()))
+            .unwrap_or(0)
+    }
+
+    /// The entry's earlier versions, newest first, each with what the next newer version
+    /// (or the current one) changed.
+    pub fn versions(&self, id: EntryId) -> Vec<VersionInfo> {
+        let Some(entry) = self.db.entry(id.into()) else { return Vec::new() };
+        let group: GroupId = entry.parent().id().into();
+        let count = entry.history.as_ref().map_or(0, |h| h.get_entries().len());
+        let mut newer = (entry_view(&entry), files_of(&entry));
+        let mut out = Vec::with_capacity(count);
+        for index in 0..count {
+            let Some(version) = entry.historical(index) else { break };
+            let older = (entry_view_in(&version, group), files_of(&version));
+            out.push(VersionInfo {
+                modified: older.0.modified,
+                changes: describe_changes(&changes(&older, &newer)),
+            });
+            newer = older;
+        }
+        out
+    }
+
+    /// History version `index` of the entry (0 = the newest), and which fields differ from
+    /// the current version (keys as in `Change::key`). Its `group` is the entry's current
+    /// folder: keepass cannot read an old version's folder once that folder is gone.
+    pub fn version(&self, id: EntryId, index: usize) -> Option<(EntryView, Vec<String>)> {
+        let entry = self.db.entry(id.into())?;
+        let version = entry.historical(index)?;
+        let current = (entry_view(&entry), files_of(&entry));
+        let old = (entry_view_in(&version, entry.parent().id().into()), files_of(&version));
+        let mut differs: Vec<String> = changes(&old, &current).iter().map(Change::key).collect();
+        differs.dedup();
+        Some((old.0, differs))
+    }
+
+    /// The bytes of a file of history version `index`.
+    pub fn version_attachment(&self, id: EntryId, index: usize, name: &str) -> Option<Vec<u8>> {
+        let entry = self.db.entry(id.into())?;
+        let version = entry.historical(index)?;
+        let att = version.attachment_by_name(name)?;
+        Some(att.data.get().clone())
+    }
+
+    /// Size in bytes of a file of history version `index`.
+    pub fn version_attachment_size(&self, id: EntryId, index: usize, name: &str) -> Option<u64> {
+        let entry = self.db.entry(id.into())?;
+        let version = entry.historical(index)?;
+        let att = version.attachment_by_name(name)?;
+        Some(att.data.get().len() as u64)
+    }
+
+    /// Versions kept per entry (KDBX metadata, so it travels with the file); 10 when unset.
+    pub fn history_max_items(&self) -> usize {
+        self.db
+            .meta
+            .history_max_items
+            .filter(|n| *n >= 0)
+            .map(|n| n as usize)
+            .unwrap_or(DEFAULT_HISTORY_MAX_ITEMS)
+    }
+
+    /// Sets the versions kept per entry and trims every entry's history to it; files only the
+    /// dropped versions used go.
+    pub fn set_history_max_items(&mut self, max: usize) {
+        self.db.meta.history_max_items = Some(max as isize);
+        let ids: Vec<db::EntryId> = self.db.iter_all_entries().map(|e| e.id()).collect();
+        for id in ids {
+            trim_history(&mut self.db, id, max);
+        }
+        self.dirty = true;
     }
 
     pub fn set_stale(&mut self, id: EntryId, stale: bool) -> Result<(), VaultError> {
@@ -922,48 +1266,6 @@ impl Vault {
         let att = entry.attachment_by_name(name)?;
         Some(att.data.get().clone())
     }
-
-    /// Adds or replaces the attachment with this name.
-    pub fn add_attachment(&mut self, id: EntryId, name: &str, bytes: Vec<u8>) -> Result<(), VaultError> {
-        let mut entry = self.db.entry_mut(id.into()).ok_or(VaultError::EntryNotFound(id))?;
-        let mut tracked = entry.track_changes();
-        tracked.add_attachment(name, Value::protected(bytes));
-        drop(tracked);
-        let max = self
-            .db
-            .meta
-            .history_max_items
-            .filter(|n| *n >= 0)
-            .map(|n| n as usize)
-            .unwrap_or(DEFAULT_HISTORY_MAX_ITEMS);
-        trim_history(&mut self.db, id.into(), max);
-        self.dirty = true;
-        Ok(())
-    }
-
-    pub fn remove_attachment(&mut self, id: EntryId, name: &str) -> Result<(), VaultError> {
-        let mut entry = self.db.entry_mut(id.into()).ok_or(VaultError::EntryNotFound(id))?;
-        if entry.attachment_by_name_mut(name).is_none() {
-            return Err(VaultError::AttachmentNotFound(name.to_owned()));
-        }
-        let mut tracked = entry.track_changes();
-        {
-            let mut e = tracked.as_mut();
-            e.remove_attachment_by_name(name);
-            e.times.last_modification = Some(Times::now());
-        }
-        drop(tracked);
-        let max = self
-            .db
-            .meta
-            .history_max_items
-            .filter(|n| *n >= 0)
-            .map(|n| n as usize)
-            .unwrap_or(DEFAULT_HISTORY_MAX_ITEMS);
-        trim_history(&mut self.db, id.into(), max);
-        self.dirty = true;
-        Ok(())
-    }
 }
 
 fn tmp_path(path: &Path) -> PathBuf {
@@ -976,6 +1278,19 @@ fn normalize_host(host: &str) -> String {
     let h = host.trim().to_lowercase();
     let h = h.strip_prefix("www.").unwrap_or(&h);
     h.trim_end_matches('.').to_owned()
+}
+
+/// Title for an entry saved without a name: "Untitled", or "Untitled 2", "Untitled 3"… when
+/// `taken` (the database's titles) already has it, ignoring case.
+pub fn untitled_name(taken: &[String]) -> String {
+    let is_taken = |name: &str| taken.iter().any(|t| t.trim().eq_ignore_ascii_case(name));
+    let mut name = "Untitled".to_owned();
+    let mut n = 2;
+    while is_taken(&name) {
+        name = format!("Untitled {n}");
+        n += 1;
+    }
+    name
 }
 
 /// `"https://www.Foo.com/x"` → `"foo.com"`; a bare `"foo.com"` is accepted. Userinfo and
@@ -1268,7 +1583,38 @@ mod tests {
             autotype_sequence: None,
             autotype_windows: Vec::new(),
             document: false,
+            attach: Vec::new(),
+            detach: Vec::new(),
         }
+    }
+
+    /// The entry as it is now, ready to change and save again.
+    fn edit_of(v: &Vault, id: EntryId) -> EntryEdit {
+        let e = v.entry(id).unwrap();
+        EntryEdit {
+            id: Some(id),
+            group: e.group,
+            title: e.title,
+            username: e.username,
+            password: e.password,
+            url: e.url,
+            notes: e.notes,
+            tags: e.tags,
+            stale: e.stale,
+            recovery_pin: e.recovery_pin,
+            recovery_phone: e.recovery_phone,
+            security_questions: e.security_questions,
+            custom: e.custom,
+            autotype_sequence: e.autotype_sequence,
+            autotype_windows: e.autotype_windows,
+            document: e.document,
+            attach: Vec::new(),
+            detach: Vec::new(),
+        }
+    }
+
+    fn history_len(v: &Vault, id: EntryId) -> usize {
+        v.db.entry(id.into()).unwrap().history.as_ref().map_or(0, |h| h.get_entries().len())
     }
 
     /// KDBX 3.1 fixture from keepass-rs (MIT), password "demopass", two entries with attachments.
@@ -1388,8 +1734,8 @@ mod tests {
         ];
         rich.autotype_sequence = Some("{USERNAME}{ENTER}{DELAY 500}{PASSWORD}{ENTER}".into());
         rich.autotype_windows = vec!["*MyBank*".into(), "//Bank.*//".into()];
+        rich.attach = vec![("card.txt".into(), b"front: 1234".to_vec())];
         let bank = v.upsert_entry(rich).unwrap();
-        v.add_attachment(bank, "card.txt", b"front: 1234".to_vec()).unwrap();
 
         let mut old = edit(root, "Amazon");
         old.stale = true;
@@ -1536,8 +1882,9 @@ mod tests {
         let path = tmp.path().join("d.kdbx");
         let mut v = Vault::create(&path, PW).unwrap();
         let root = v.root();
-        let id = v.upsert_entry(edit(root, "Doomed")).unwrap();
-        v.add_attachment(id, "a.bin", vec![1, 2, 3]).unwrap();
+        let mut doomed = edit(root, "Doomed");
+        doomed.attach = vec![("a.bin".into(), vec![1, 2, 3])];
+        let id = v.upsert_entry(doomed).unwrap();
         v.delete_entry(id).unwrap();
         let bin = v.groups().into_iter().find(|g| g.is_recycle_bin).unwrap().id;
         assert_eq!(v.entry(id).unwrap().group, bin);
@@ -1643,11 +1990,11 @@ mod tests {
         let mut e = edit(root, "Passport");
         e.document = true;
         e.notes = "# Passport\nNumber **X123**\nExpires 2031".into();
+        e.attach = vec![("scan.pdf".into(), vec![7; 3000])];
         let doc = v.upsert_entry(e).unwrap();
-        let acct = v.upsert_entry(edit(root, "Bank")).unwrap();
-        v.add_attachment(doc, "scan.pdf", vec![7; 3000]).unwrap();
-        v.add_attachment(acct, "copy.pdf", vec![7; 3000]).unwrap();
-        v.add_attachment(acct, "other.txt", vec![1; 500]).unwrap();
+        let mut bank = edit(root, "Bank");
+        bank.attach = vec![("copy.pdf".into(), vec![7; 3000]), ("other.txt".into(), vec![1; 500])];
+        let acct = v.upsert_entry(bank).unwrap();
         v.save(&policy(tmp.path())).unwrap();
 
         let mut v = Vault::open(&path, PW, None).unwrap();
@@ -1677,15 +2024,250 @@ mod tests {
         assert!(!v.entry(id).unwrap().stale);
         assert_eq!(v.db.entry(id.into()).unwrap().get(FIELD_STALE), None);
 
-        v.add_attachment(id, "f", vec![9]).unwrap();
-        v.add_attachment(id, "f", vec![8, 7]).unwrap();
+        let mut e = edit_of(&v, id);
+        e.attach = vec![("f".into(), vec![9])];
+        v.upsert_entry(e).unwrap();
+        let mut e = edit_of(&v, id);
+        e.attach = vec![("f".into(), vec![8, 7])];
+        v.upsert_entry(e).unwrap();
         assert_eq!(v.attachment(id, "f").unwrap(), vec![8, 7]);
         assert_eq!(v.entry(id).unwrap().attachments, vec!["f".to_string()]);
-        v.remove_attachment(id, "f").unwrap();
+        let mut e = edit_of(&v, id);
+        e.detach = vec!["f".into()];
+        v.upsert_entry(e).unwrap();
         assert!(v.attachment(id, "f").is_none());
-        assert!(matches!(v.remove_attachment(id, "f"), Err(VaultError::AttachmentNotFound(_))));
+        let mut e = edit_of(&v, id);
+        e.detach = vec!["f".into()];
+        assert!(matches!(v.upsert_entry(e), Err(VaultError::AttachmentNotFound(_))));
+        let mut e = edit(root, "New");
+        e.detach = vec!["f".into()];
+        assert!(matches!(v.upsert_entry(e), Err(VaultError::AttachmentNotFound(_))));
+        assert_eq!(v.all_entries().len(), 1, "a refused edit must not create an entry");
         v.db.remove_unused_attachments();
-        assert_eq!(v.db.num_attachments(), 0);
+        // Both earlier contents of "f" stay for the history versions that have them.
+        assert_eq!(v.db.num_attachments(), 2);
+        let raw = v.db.entry(id.into()).unwrap();
+        assert_eq!(raw.historical(0).unwrap().attachment_by_name("f").unwrap().data.get(), &vec![8, 7]);
+        assert_eq!(raw.historical(1).unwrap().attachment_by_name("f").unwrap().data.get(), &vec![9]);
+        assert!(raw.historical(2).unwrap().attachment_by_name("f").is_none());
+    }
+
+    #[test]
+    fn edit_with_files_is_one_history_version() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("h.kdbx");
+        let mut v = Vault::create(&path, PW).unwrap();
+        let root = v.root();
+        let mut e = edit(root, "Passport");
+        e.attach = vec![("old.pdf".into(), vec![1; 10])];
+        let id = v.upsert_entry(e).unwrap();
+        assert_eq!(history_len(&v, id), 0);
+
+        let mut e = edit_of(&v, id);
+        e.title = "Passport 2031".into();
+        e.detach = vec!["old.pdf".into()];
+        e.attach = vec![("new.pdf".into(), vec![2; 20]), ("back.pdf".into(), vec![3; 30])];
+        v.upsert_entry(e).unwrap();
+
+        assert_eq!(history_len(&v, id), 1);
+        let now = v.entry(id).unwrap();
+        assert_eq!(now.title, "Passport 2031");
+        assert_eq!(now.attachments, vec!["back.pdf".to_string(), "new.pdf".to_string()]);
+        let raw = v.db.entry(id.into()).unwrap();
+        let before = raw.historical(0).unwrap();
+        assert_eq!(before.get(fields::TITLE), Some("Passport"));
+        assert_eq!(before.attachments_named().map(|(n, _)| n.to_owned()).collect::<Vec<_>>(), vec!["old.pdf".to_string()]);
+
+        v.save(&policy(tmp.path())).unwrap();
+        let v = Vault::open(&path, PW, None).unwrap();
+        assert_eq!(v.attachment(id, "new.pdf").unwrap(), vec![2; 20]);
+        assert_eq!(history_len(&v, id), 1);
+    }
+
+    #[test]
+    fn removed_and_replaced_files_stay_in_history_until_trimmed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("files.kdbx");
+        let pol = policy(tmp.path());
+        let mut v = Vault::create(&path, PW).unwrap();
+        let root = v.root();
+        // A file deleted for good before the edits leaves a free id below a.pdf's.
+        let mut gone = edit(root, "Gone");
+        gone.attach = vec![("g".into(), vec![9; 5])];
+        let gone = v.upsert_entry(gone).unwrap();
+        let other = v.upsert_entry(edit(root, "Other")).unwrap();
+        // Bytes that do not compress, so the file size shows whether they are stored.
+        let mut x = 0x2545_f491u32;
+        let scan: Vec<u8> = (0..40_000)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 17;
+                x ^= x << 5;
+                x as u8
+            })
+            .collect();
+        let mut e = edit(root, "Will");
+        e.attach = vec![("a.pdf".into(), scan.clone()), ("keep.txt".into(), vec![1; 10])];
+        let id = v.upsert_entry(e).unwrap();
+        let mut o = edit_of(&v, other);
+        o.attach = vec![("x".into(), vec![2; 5])];
+        v.upsert_entry(o).unwrap();
+        v.remove_entry(gone).unwrap();
+        v.save(&pol).unwrap();
+
+        let mut e = edit_of(&v, id);
+        e.detach = vec!["a.pdf".into()];
+        v.upsert_entry(e).unwrap();
+        let mut o = edit_of(&v, other);
+        o.detach = vec!["x".into()];
+        v.upsert_entry(o).unwrap();
+        let mut e = edit_of(&v, id);
+        e.attach = vec![("keep.txt".into(), vec![3; 10])];
+        v.upsert_entry(e).unwrap();
+        v.save(&pol).unwrap();
+        let with_history = fs::metadata(&path).unwrap().len();
+
+        let mut v = Vault::open(&path, PW, None).unwrap();
+        assert_eq!(v.entry(id).unwrap().attachments, vec!["keep.txt".to_string()]);
+        assert_eq!(v.attachment(id, "keep.txt").unwrap(), vec![3; 10]);
+        assert_eq!(v.version_attachment(id, 0, "keep.txt").unwrap(), vec![1; 10]);
+        assert!(v.version_attachment(id, 0, "a.pdf").is_none());
+        assert_eq!(v.version_attachment(id, 1, "a.pdf").unwrap(), scan);
+        assert_eq!(v.version_attachment(other, 0, "x").unwrap(), vec![2; 5]);
+
+        // Keeping no versions drops the files only they used.
+        v.set_history_max_items(0);
+        assert_eq!(v.history_len(id), 0);
+        assert_eq!(v.attachments_total_bytes(), 10);
+        v.save(&pol).unwrap();
+        let after = fs::metadata(&path).unwrap().len();
+        assert!(after + 30_000 < with_history, "with history {with_history} bytes, trimmed {after} bytes");
+        let v = Vault::open(&path, PW, None).unwrap();
+        assert_eq!(v.history_max_items(), 0);
+        assert_eq!(v.attachment(id, "keep.txt").unwrap(), vec![3; 10]);
+    }
+
+    #[test]
+    fn restore_version_undoes_the_last_edit() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("u.kdbx");
+        let mut v = Vault::create(&path, PW).unwrap();
+        let root = v.root();
+        let sub = v.add_group(root, "Sub").unwrap();
+        let id = v.upsert_entry(edit(root, "Bank")).unwrap();
+        // A new entry has no earlier version.
+        assert!(matches!(v.restore_version(id, 0, false), Err(VaultError::NoEarlierVersion(_))));
+
+        let mut e = edit_of(&v, id);
+        e.title = "Bank renamed".into();
+        e.password = "changed".into();
+        e.group = sub;
+        e.attach = vec![("card.txt".into(), vec![5; 5])];
+        v.upsert_entry(e).unwrap();
+
+        // Undo of that save: back to the old content and the old folder.
+        v.restore_version(id, 0, false).unwrap();
+        let back = v.entry(id).unwrap();
+        assert_eq!(back.title, "Bank");
+        assert_eq!(back.password, "pw-Bank");
+        assert_eq!(back.group, root);
+        assert!(back.attachments.is_empty());
+        assert_eq!(v.entries_in(root).len(), 1);
+        assert!(v.entries_in(sub).is_empty());
+        // The undone version stays in the history, with its file.
+        assert_eq!(v.history_len(id), 2);
+        assert_eq!(v.version_attachment(id, 0, "card.txt").unwrap(), vec![5; 5]);
+        let raw = v.db.entry(id.into()).unwrap();
+        assert_eq!(raw.historical(0).unwrap().get(fields::TITLE), Some("Bank renamed"));
+
+        v.save(&policy(tmp.path())).unwrap();
+        let mut v = Vault::open(&path, PW, None).unwrap();
+        assert_eq!(v.entry(id).unwrap().title, "Bank");
+        assert_eq!(v.entry(id).unwrap().group, root);
+
+        v.remove_entry(id).unwrap();
+        assert!(v.entry(id).is_none());
+        assert!(v.is_dirty());
+    }
+
+    #[test]
+    fn restore_and_delete_versions_by_index() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("idx.kdbx");
+        let mut v = Vault::create(&path, PW).unwrap();
+        let root = v.root();
+        let sub = v.add_group(root, "Sub").unwrap();
+        let id = v.upsert_entry(edit(root, "V1")).unwrap();
+        for title in ["V2", "V3"] {
+            let mut e = edit_of(&v, id);
+            e.title = title.into();
+            v.upsert_entry(e).unwrap();
+        }
+        // Move the entry; restoring from the viewer keeps it where it is now.
+        let mut e = edit_of(&v, id);
+        e.title = "V4".into();
+        e.group = sub;
+        v.upsert_entry(e).unwrap();
+        // Versions newest first: V3, V2, V1.
+        let titles = |v: &Vault| (0..v.history_len(id)).map(|i| v.version(id, i).unwrap().0.title).collect::<Vec<_>>();
+        assert_eq!(titles(&v), ["V3", "V2", "V1"]);
+
+        v.restore_version(id, 2, true).unwrap();
+        let now = v.entry(id).unwrap();
+        assert_eq!(now.title, "V1");
+        assert_eq!(now.group, sub);
+        assert_eq!(v.entries_in(sub).len(), 1);
+        assert!(v.entries_in(root).is_empty());
+        assert_eq!(titles(&v), ["V4", "V3", "V2", "V1"]);
+
+        v.delete_version(id, 1).unwrap();
+        assert_eq!(titles(&v), ["V4", "V2", "V1"]);
+        assert!(matches!(v.delete_version(id, 3), Err(VaultError::NoEarlierVersion(_))));
+        assert_eq!(v.entry(id).unwrap().title, "V1");
+        v.save(&policy(tmp.path())).unwrap();
+        let v = Vault::open(&path, PW, None).unwrap();
+        assert_eq!(titles(&v), ["V4", "V2", "V1"]);
+    }
+
+    #[test]
+    fn version_summaries_and_differences() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut v = Vault::create(&tmp.path().join("s.kdbx"), PW).unwrap();
+        let root = v.root();
+        let mut e = edit(root, "Bank");
+        e.attach = vec![("old.pdf".into(), vec![1]), ("same.txt".into(), vec![2])];
+        e.custom = vec![CustomField { key: "PIN".into(), value: "1".into(), protected: true }];
+        let id = v.upsert_entry(e).unwrap();
+
+        let mut e = edit_of(&v, id);
+        e.password = "new".into();
+        e.url = "bank.example".into();
+        e.custom = vec![CustomField { key: "Account".into(), value: "9".into(), protected: false }];
+        e.detach = vec!["old.pdf".into()];
+        e.attach = vec![("scan.pdf".into(), vec![3]), ("same.txt".into(), vec![4])];
+        v.upsert_entry(e).unwrap();
+        v.set_stale(id, true).unwrap();
+
+        let versions = v.versions(id);
+        assert_eq!(versions.len(), 2);
+        assert_eq!(versions[0].changes, ["marked not working"]);
+        assert_eq!(
+            versions[1].changes,
+            [
+                "password, website changed",
+                "field added: Account",
+                "field removed: PIN",
+                "file replaced: same.txt",
+                "file added: scan.pdf",
+                "file removed: old.pdf",
+            ]
+        );
+        // Version 1 against the current version.
+        let (old, differs) = v.version(id, 1).unwrap();
+        assert_eq!(old.password, "pw-Bank");
+        assert_eq!(differs, ["password", "url", "custom:Account", "custom:PIN", "files", "stale"]);
+        let (_, differs) = v.version(id, 0).unwrap();
+        assert_eq!(differs, ["stale"]);
     }
 
     #[test]
@@ -1787,6 +2369,14 @@ mod tests {
         v.save(&pol).unwrap();
         assert!(Vault::open(&path, PW, Some(&kf)).is_ok());
         assert!(Vault::open(&path, PW, None).is_err());
+    }
+
+    #[test]
+    fn untitled_names_skip_taken_ones() {
+        assert_eq!(untitled_name(&[]), "Untitled");
+        assert_eq!(untitled_name(&["Bank".into()]), "Untitled");
+        assert_eq!(untitled_name(&["untitled".into()]), "Untitled 2");
+        assert_eq!(untitled_name(&["Untitled".into(), "Untitled 2".into(), "Untitled 4".into()]), "Untitled 3");
     }
 
     #[test]

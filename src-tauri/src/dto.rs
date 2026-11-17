@@ -1,6 +1,7 @@
 //! Data sent to and received from the web frontend. Field names are camelCase on the wire.
 //! The list and detail views never carry passwords or other protected values; those only
-//! cross the bridge through `reveal_field` (one value on demand) and the edit form.
+//! cross the bridge through `reveal_field` (one value on demand) and `draft_open`, when an
+//! entry is edited in the details pane.
 
 use ourlogins::settings::TileColors;
 use serde::{Deserialize, Serialize};
@@ -45,6 +46,8 @@ pub struct TabItem {
     pub saving: bool,
     /// Changes not on disk and no save running: the last save failed.
     pub unsaved: bool,
+    /// Earlier versions kept per entry (KDBX metadata of this file).
+    pub history_max_items: usize,
 }
 
 /// A folder in the sidebar (any group except the root and the Recycle Bin subtree).
@@ -80,16 +83,6 @@ pub struct Counts {
     pub not_working: usize,
     pub documents: usize,
     pub recycle_bin: usize,
-}
-
-/// Space the open database takes, shown next to attachments.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Storage {
-    /// All attachments in the file.
-    pub attachments_bytes: u64,
-    /// The `.kdbx` file on disk as last saved.
-    pub file_bytes: u64,
 }
 
 #[derive(Serialize)]
@@ -145,6 +138,11 @@ pub struct EntryDetail {
     pub custom: Vec<CustomFieldView>,
     pub attachments: Vec<AttachmentInfo>,
     pub document: bool,
+    /// Empty when the default sequence from Settings applies.
+    pub autotype_sequence: String,
+    pub autotype_windows: Vec<String>,
+    /// Earlier versions kept in the entry's history.
+    pub history_count: usize,
 }
 
 #[derive(Serialize)]
@@ -164,7 +162,6 @@ pub struct MainView {
     /// False when the database has its recycle bin turned off: every delete is permanent.
     pub recycle_bin_enabled: bool,
     pub tile_colors: TileColors,
-    pub storage: Storage,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy)]
@@ -183,18 +180,20 @@ pub struct CustomFieldDto {
     pub protected: bool,
 }
 
+/// A folder an entry can be put in (the root reads "No folder").
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct FormGroup {
+pub struct FolderOption {
     pub id: String,
     pub name: String,
     pub depth: usize,
     pub is_recycle_bin: bool,
 }
 
+/// Every value of an entry being edited in the details pane, protected ones included.
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct EntryForm {
+pub struct DraftEntry {
     pub id: Option<String>,
     pub group: String,
     pub title: String,
@@ -210,24 +209,14 @@ pub struct EntryForm {
     pub autotype_windows: String,
     pub custom: Vec<CustomFieldDto>,
     pub document: bool,
+    /// Attachments to remove when the draft is saved.
+    pub remove_files: Vec<String>,
 }
 
-/// A file the user picked to attach, before it is added (sizes in bytes).
+/// Files picked for the draft, attached when it is saved (sizes in bytes).
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AttachmentPick {
-    pub name: String,
-    pub size: u64,
-    /// Attachments already in the database.
-    pub attachments_bytes: u64,
-    /// The database file now.
-    pub file_bytes: u64,
-}
-
-/// Files chosen in the Add document form, attached when the form is saved (sizes in bytes).
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FormFiles {
+pub struct DraftFiles {
     pub files: Vec<AttachmentInfo>,
     /// Attachments already in the database.
     pub attachments_bytes: u64,
@@ -244,13 +233,10 @@ pub struct AboutInfo {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct FormData {
-    pub mode: &'static str,
-    /// Name of the database the entry belongs to, set when several are open.
-    pub database: Option<String>,
-    pub groups: Vec<FormGroup>,
+pub struct Draft {
+    pub folders: Vec<FolderOption>,
     pub gen: GenOptionsDto,
-    pub entry: EntryForm,
+    pub entry: DraftEntry,
 }
 
 #[derive(Serialize)]
@@ -258,6 +244,44 @@ pub struct FormData {
 pub struct Duplicate {
     pub id: String,
     pub title: String,
+}
+
+/// An earlier version of the selected entry in the history list (newest first).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VersionItem {
+    /// 0 = the newest earlier version.
+    pub index: usize,
+    pub modified: String,
+    /// What the next save changed: "password, website changed", "file added: scan.pdf".
+    pub changes: Vec<String>,
+}
+
+/// One earlier version, shown like `EntryDetail`: no protected values (`reveal_field` and
+/// `copy_field` with `version` get them).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VersionDetail {
+    pub index: usize,
+    pub title: String,
+    pub username: String,
+    pub url: String,
+    pub notes: String,
+    pub tags: Vec<String>,
+    pub stale: bool,
+    pub modified: String,
+    pub has_password: bool,
+    pub has_recovery_pin: bool,
+    pub recovery_phone: String,
+    pub has_security_questions: bool,
+    pub custom: Vec<CustomFieldView>,
+    pub attachments: Vec<AttachmentInfo>,
+    pub document: bool,
+    pub autotype_sequence: String,
+    pub autotype_windows: Vec<String>,
+    /// Keys of the fields that differ from the current version: "title", "password",
+    /// "custom:<name>", "files", "stale", …
+    pub differs: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -283,6 +307,10 @@ pub struct SettingsView {
     pub quick_unlock: bool,
     /// Seconds until a copy is cleared from the clipboard; 0 = never, at most 3600.
     pub clipboard_clear_seconds: u32,
+    /// Minutes without use before every database locks; 0 = never, at most 1440.
+    pub auto_lock_minutes: u32,
+    /// Lock when the computer locks or sleeps (Windows and macOS only).
+    pub lock_on_system_lock: bool,
     /// "Touch ID" / "Windows Hello" when this machine has it set up (read-only); `None` hides the option.
     pub quick_unlock_name: Option<String>,
 }

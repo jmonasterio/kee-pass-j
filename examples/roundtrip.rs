@@ -91,6 +91,8 @@ fn main() {
             autotype_sequence: None,
             autotype_windows: vec![],
             document: false,
+            attach: vec![],
+            detach: vec![],
         })
         .expect("upsert");
 

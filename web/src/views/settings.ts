@@ -65,6 +65,28 @@ export async function openSettings(): Promise<void> {
         ),
     ),
   );
+  const lockChoices = [0, 5, 10, 15, 30, 60];
+  if (!lockChoices.includes(current.autoLockMinutes)) lockChoices.push(current.autoLockMinutes);
+  const autoLock = el(
+    "fluent-dropdown",
+    { class: "clipboard-dropdown", attrs: { "aria-label": "Lock after inactivity" } },
+    el(
+      "fluent-listbox",
+      null,
+      lockChoices
+        .sort((a, b) => a - b)
+        .map((m) =>
+          el(
+            "fluent-option",
+            { attrs: { value: String(m), selected: m === current.autoLockMinutes } },
+            m === 0 ? "Never" : m === 1 ? "1 minute" : `${m} minutes`,
+          ),
+        ),
+    ),
+  );
+  // Linux has no lock or sleep notification the app watches.
+  const watchesSystemLock = document.documentElement.dataset.os !== "linux";
+  const lockOnSystemLock = watchesSystemLock ? toggle("Lock when the computer locks or sleeps", current.lockOnSystemLock) : null;
 
   const length = Math.min(128, Math.max(4, current.generator.length));
   const lengthLabel = el("span", { class: "slider-value" }, String(length));
@@ -99,6 +121,8 @@ export async function openSettings(): Promise<void> {
       backupDir: current.backupDir,
       quickUnlock: quickUnlock ? quickUnlock.checked : current.quickUnlock,
       clipboardClearSeconds: Number(clipboardClear.value),
+      autoLockMinutes: Number(autoLock.value),
+      lockOnSystemLock: lockOnSystemLock ? lockOnSystemLock.checked : current.lockOnSystemLock,
       quickUnlockName: current.quickUnlockName,
     };
     busy = true;
@@ -127,7 +151,25 @@ export async function openSettings(): Promise<void> {
         "In a login window: types the matching account, or opens Quick Access to pick or search one.",
         hotkey,
       ),
-      row("text", "Default typing sequence", "What Auto-Type types when an account has no sequence of its own.", sequence),
+      row(
+        "text",
+        "Default typing sequence",
+        "What Auto-Type types when an account has no sequence of its own. The field is cleared before {USERNAME} and {PASSWORD}, so you don't need {CLEARFIELD}.",
+        sequence,
+      ),
+    ),
+    section(
+      "Locking",
+      row(
+        "lock",
+        "Lock after inactivity",
+        "Lock every open database when Our Logins has not been used this long. Changes not saved yet are saved first." +
+          (watchesSystemLock ? "" : " Locking when the computer locks or sleeps is not available on Linux."),
+        autoLock,
+      ),
+      lockOnSystemLock
+        ? row(null, "Lock when the computer locks or sleeps", "Lock every open database when you lock the screen or the computer goes to sleep.", lockOnSystemLock)
+        : null,
     ),
     section(
       "General",
