@@ -1030,7 +1030,7 @@ pub async fn autotype_selected(app: AppHandle, state: State<'_, Shared>) -> R<()
         let st = state.lock();
         (st.active_tab, selected_entry(&st)?.id)
     };
-    typing::perform_hidden(&app, "main", tab, id, true)
+    typing::perform_hidden(&app, "main", tab, id, false, true)
 }
 
 // ---------------------------------------------------------------------------
@@ -1064,11 +1064,12 @@ fn quick_entry(st: &AppState, db: usize, id: &str) -> R<EntryView> {
         .ok_or_else(|| "That account no longer exists.".into())
 }
 
-/// Hides Quick Access so the window behind it gets the focus back, then types the account.
+/// Hides Quick Access so the window behind it gets the focus back, then types the account
+/// (`password_only`: just the password and Enter, for pages that ask only for the password).
 #[tauri::command]
-pub async fn quick_type(app: AppHandle, state: State<'_, Shared>, db: usize, id: String) -> R<()> {
+pub async fn quick_type(app: AppHandle, state: State<'_, Shared>, db: usize, id: String, password_only: bool) -> R<()> {
     let entry = quick_entry(&state.lock(), db, &id)?;
-    typing::perform_hidden(&app, "quick", db, entry.id, false)
+    typing::perform_hidden(&app, "quick", db, entry.id, password_only, false)
 }
 
 /// Copies one field of the account and closes Quick Access.

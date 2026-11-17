@@ -97,35 +97,51 @@ fn resolve_from(map: &HashMap<String, String>, name: &str) -> Option<String> {
 struct TypingJob {
     tokens: Vec<autotype::Token>,
     fields: HashMap<String, String>,
+    /// The username, when the entry types the default sequence: that sequence is then
+    /// adapted to the focused field (see `autotype::adapt_default`).
+    adapt_for: Option<String>,
 }
 
-fn typing_job(app: &AppHandle, db_index: usize, id: EntryId) -> Result<TypingJob, String> {
+/// What to type for the entry: its own sequence, the default one, or (`password_only`) just
+/// the password and Enter.
+fn typing_job(app: &AppHandle, db_index: usize, id: EntryId, password_only: bool) -> Result<TypingJob, String> {
     let st = app.state::<Shared>();
     let st = st.lock();
     let db = st.dbs.get(db_index).ok_or("That database is no longer open.")?;
     let e = db.vault.entry(id).ok_or("That account no longer exists.")?;
-    let seq = e
-        .autotype_sequence
-        .as_deref()
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or(&st.settings.autotype_default_sequence);
-    let tokens = autotype::parse_sequence(seq).map_err(|err| format!("Auto-Type sequence not understood: {err}"))?;
+    let own = e.autotype_sequence.as_deref().filter(|s| !s.trim().is_empty());
+    let (tokens, adapt_for) = if password_only {
+        (autotype::password_only(), None)
+    } else {
+        let seq = own.unwrap_or(&st.settings.autotype_default_sequence);
+        let tokens = autotype::parse_sequence(seq).map_err(|err| format!("Auto-Type sequence not understood: {err}"))?;
+        (tokens, own.is_none().then(|| e.username.clone()))
+    };
     Ok(TypingJob {
         tokens,
         fields: field_map(&e),
+        adapt_for,
     })
 }
 
 fn run_typing(job: &TypingJob) -> Result<(), String> {
     let fields = &job.fields;
-    autotype::perform(&job.tokens, &|name| resolve_from(fields, name)).map_err(|e| format!("Auto-Type failed: {e}"))
+    let adapted;
+    let tokens = match &job.adapt_for {
+        Some(username) => {
+            adapted = autotype::adapt_default(&job.tokens, autotype::focused_field().as_ref(), username);
+            &adapted
+        }
+        None => &job.tokens,
+    };
+    autotype::perform(tokens, &|name| resolve_from(fields, name)).map_err(|e| format!("Auto-Type failed: {e}"))
 }
 
 /// Hides the window `label` so the window behind it regains focus, waits 250 ms, types on the
 /// main thread, then shows `label` again when `show_again` (the main window in select-entry
 /// mode; Quick Access stays hidden).
-pub fn perform_hidden(app: &AppHandle, label: &str, db_index: usize, id: EntryId, show_again: bool) -> Result<(), String> {
-    let job = typing_job(app, db_index, id)?;
+pub fn perform_hidden(app: &AppHandle, label: &str, db_index: usize, id: EntryId, password_only: bool, show_again: bool) -> Result<(), String> {
+    let job = typing_job(app, db_index, id, password_only)?;
     let window = app.get_webview_window(label).ok_or("Window missing.")?;
     window.hide().map_err(|e| format!("Could not hide the window: {e}"))?;
     let app = app.clone();
@@ -187,7 +203,8 @@ fn on_hotkey(app: &AppHandle) {
                     .filter(|e| {
                         !title.is_empty()
                             && (e.autotype_windows.iter().any(|p| autotype::window_matches(p, &title))
-                                || autotype::title_matches(&e.title, &title))
+                                || autotype::title_matches(&e.title, &title)
+                                || autotype::url_host_matches(&e.url, &title))
                     })
                     .map(move |e| (i, e))
             })
@@ -201,7 +218,7 @@ fn on_hotkey(app: &AppHandle) {
         (payload, single)
     };
     if let Some((db, id)) = single {
-        if let Err(err) = typing_job(app, db, id).and_then(|job| run_typing(&job)) {
+        if let Err(err) = typing_job(app, db, id, false).and_then(|job| run_typing(&job)) {
             toast(app, &err);
         }
         return;

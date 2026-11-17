@@ -138,22 +138,31 @@ pub fn backup_policy() -> vault::BackupPolicy;  // dir = data_dir()/backups, 20,
 ## `autotype`
 
 ```rust
-pub enum Token { Field(String), Key(Key), Char(char), Delay(u64), Modified(Modifiers, Box<Token>) }
+pub enum Token { Field(String), Key(Key), Char(char), Delay(u64), ClearField, Modified(Modifiers, Box<Token>) }
 pub enum Key { Tab, Enter, Space, Backspace, Delete, Escape, Home, End, Up, Down, Left, Right, PageUp, PageDown, Insert, F(u8) }  // Insert fails on macOS (no such key)
 pub struct Modifiers { pub shift: bool, pub ctrl: bool, pub alt: bool }
-/// KeePass 2.x grammar: `{USERNAME}` `{PASSWORD}` `{URL}` `{TITLE}` `{NOTES}` `{S:Field Name}`,
+/// KeePass 2.x grammar: `{USERNAME}` `{PASSWORD}` `{URL}` `{TITLE}` `{NOTES}` `{S:Field Name}`, `{CLEARFIELD}`,
 /// `{TAB}` `{ENTER}` `{SPACE}` `{BACKSPACE}` `{DELETE}` `{ESC}` `{HOME}` `{END}` `{UP}` `{DOWN}` `{LEFT}` `{RIGHT}` `{F1}`..`{F12}`,
 /// `{TAB 3}` repeat counts, `{DELAY 500}`, `{{}` `{}}` `{+}` `{^}` `{%}` escapes,
 /// `+` `^` `%` prefix = shift/ctrl/alt applied to the next key or `(group)`.
 /// Plain characters type literally.
 pub fn parse_sequence(seq: &str) -> Result<Vec<Token>, AutotypeError>;
 /// Types the sequence. `resolve` maps field names (upper-case standard names or `S:` custom names) to values.
+/// Releases modifiers still held from the hotkey first; fails with `WindowChanged` if the foreground window changes.
 pub fn perform(tokens: &[Token], resolve: &dyn Fn(&str) -> Option<String>) -> Result<(), AutotypeError>;
+/// The focused field (`is_password`, `value`): Windows UI Automation, macOS Accessibility, else None. 400 ms timeout.
+pub fn focused_field() -> Option<FocusedField>;
+/// Default sequence fitted to the focused field: `{CLEARFIELD}` before USERNAME/PASSWORD; a leading
+/// `{USERNAME}{TAB}` is dropped in a password box, `{USERNAME}` alone when the field already holds it.
+pub fn adapt_default(tokens: &[Token], focused: Option<&FocusedField>, username: &str) -> Vec<Token>;
+pub fn password_only() -> Vec<Token>;  // {CLEARFIELD}{PASSWORD}{ENTER}, Quick Access "Type password"
 pub fn active_window_title() -> Option<String>;  // src/input.rs: Windows GetForegroundWindow; macOS frontmost app's layer-0 window via CGWindowListCopyWindowInfo (empty without Screen Recording permission)
 /// KeePass window matching: pattern `//regex//` is a regex; otherwise `*` wildcards, case-insensitive, whole-title match.
 pub fn window_matches(pattern: &str, title: &str) -> bool;
 /// Default association: entry title (non-empty, >= 3 chars) appears in the window title, case-insensitive.
 pub fn title_matches(entry_title: &str, window_title: &str) -> bool;
+/// KeePass "URL host in title": the entry URL's host (no `www.`) appears in the window title.
+pub fn url_host_matches(url: &str, window_title: &str) -> bool;
 pub fn parse_hotkey(s: &str) -> Result<global_hotkey::hotkey::HotKey, AutotypeError>;  // "Ctrl+Alt+A"
 ```
 

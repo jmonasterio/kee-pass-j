@@ -41,10 +41,15 @@ right-click it and choose Open. Pushing a `v*` tag publishes both as a GitHub re
 - Generator: no `0 O o 1 l I | 5 S 8 B 2 Z` by default, one length slider, digits and
   symbols checkboxes.
 - Notes render with optional monospace and copy one line at a time.
-- Auto-Type with KeePass 2.x semantics: a global hotkey matches the current window's title,
-  or type the selected entry. Default sequence `{USERNAME}{TAB}{PASSWORD}{ENTER}`, per-entry
-  override, KeePass placeholder grammar. Windows: `SendInput` called directly; macOS:
-  `CGEvent` via `enigo` (macOS asks for the Accessibility permission once).
+- Auto-Type with KeePass 2.x semantics: a global hotkey matches the current window's title
+  (by entry title, URL host or window pattern), or type the selected entry. Default sequence
+  `{USERNAME}{TAB}{PASSWORD}{ENTER}`, per-entry override, KeePass placeholder grammar
+  including `{CLEARFIELD}`. The default sequence looks at the focused field first (Windows
+  UI Automation, macOS Accessibility): it replaces text already in a field, skips a username
+  that is already filled in, and types only the password into a password box. Like KeePass,
+  it lets go of the hotkey's modifier keys before typing and stops if another window comes
+  to the front. Windows: `SendInput` called directly; macOS: `CGEvent` via `enigo` (macOS
+  asks for the Accessibility permission once).
 - Copying a password (or anything else) keeps it out of Windows clipboard history (Win+V)
   and cloud clipboard sync; on macOS it carries the marker clipboard-history apps honour.
   The clipboard is emptied 20 seconds later (Settings: Never to 120 s), and when Our Logins
@@ -52,8 +57,8 @@ right-click it and choose Open. Pushing a `v*` tag publishes both as a GitHub re
 - KeePass shortcuts on the selected entry: Ctrl+B copies the username, Ctrl+C the password,
   Ctrl+U opens the website.
 - Quick Access: when the hotkey finds several matching accounts or none, a small window
-  opens over the current app to pick or search one; Enter types it, Ctrl+Enter copies the
-  password.
+  opens over the current app to pick or search one; Enter types it, Shift+Enter types only
+  the password, Ctrl+Enter copies the password.
 - Quick unlock: after one unlock with the password, Windows Hello (PIN, fingerprint or face)
   or Touch ID unlocks the database. The password is kept encrypted with a Windows Hello key,
   or in the login Keychain on macOS (see `src-tauri/src/biometric.rs` for the trade-off).
@@ -112,8 +117,8 @@ A Tauri 2 app: a Rust backend, and a TypeScript + Fluent UI frontend in the syst
 - `src/generator.rs`: password generator.
 - `src/settings.rs`: per-user settings and recent files.
 - `src/autotype.rs`: sequence grammar, typing a sequence, window matching.
-- `src/input.rs`: keystrokes and the foreground window title (Win32 on Windows, `enigo`
-  and AppKit/Core Graphics on macOS).
+- `src/input.rs`: keystrokes, the foreground window and the focused field (Win32 and UI
+  Automation on Windows; `enigo`, AppKit, Core Graphics and Accessibility on macOS).
 - `src-tauri/`: the desktop app (Tauri commands, app state, hotkey and Auto-Type wiring).
 - `web/`: the frontend (vanilla TypeScript, Fluent UI Web Components, CSS).
 - `docs/ARCHITECTURE.md`: module contracts and the webview security rules.

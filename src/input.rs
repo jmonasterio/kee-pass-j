@@ -1,6 +1,7 @@
-//! Keystrokes and the foreground window's title, per platform. Windows calls the Win32 API
-//! directly (`SendInput`, `GetForegroundWindow`). macOS types through `enigo` and reads the
-//! title through AppKit and Core Graphics.
+//! Keystrokes, the foreground window and the focused field, per platform. Windows calls the
+//! Win32 API directly (`SendInput`, `GetForegroundWindow`, UI Automation). macOS types
+//! through `enigo` and reads windows and fields through AppKit, Core Graphics and the
+//! Accessibility API. Other systems type through `enigo` and report no window or field.
 
 use crate::autotype::Key;
 
@@ -18,17 +19,59 @@ pub enum Modifier {
     Alt,
 }
 
-pub use platform::{active_window_title, Keyboard};
+/// The text field that has the keyboard focus in the app being typed into.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FocusedField {
+    /// A password box (Windows `IsPassword`, macOS `AXSecureTextField`).
+    pub is_password: bool,
+    /// Its text, when the app exposes it (never for password boxes).
+    pub value: Option<String>,
+}
+
+pub use platform::{active_window_title, foreground_window, Keyboard};
+
+/// How long to wait for the app to answer an accessibility query. Busy or unresponsive
+/// apps can block these calls; typing then goes ahead as if nothing were known.
+const FIELD_QUERY_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(400);
+
+/// The focused field of the foreground app, or `None` when the OS does not say (or does not
+/// answer within [`FIELD_QUERY_TIMEOUT`]). Runs on its own thread so a hung app cannot stall
+/// typing.
+pub fn focused_field() -> Option<FocusedField> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(platform::focused_field());
+    });
+    rx.recv_timeout(FIELD_QUERY_TIMEOUT).ok().flatten()
+}
 
 #[cfg(windows)]
 mod platform {
-    use super::{Direction, Key, Modifier};
+    use super::{Direction, FocusedField, Key, Modifier};
+    use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED};
+    use windows::Win32::UI::Accessibility::{CUIAutomation, IUIAutomation, IUIAutomationValuePattern, UIA_ValuePatternId};
     use windows::Win32::UI::Input::KeyboardAndMouse::{
-        MapVirtualKeyW, SendInput, VkKeyScanW, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_EXTENDEDKEY,
-        KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, MAPVK_VK_TO_VSC, VIRTUAL_KEY, VK_BACK, VK_CONTROL, VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_F1,
-        VK_HOME, VK_INSERT, VK_LEFT, VK_MENU, VK_NEXT, VK_PRIOR, VK_RETURN, VK_RIGHT, VK_SHIFT, VK_SPACE, VK_TAB, VK_UP,
+        GetAsyncKeyState, MapVirtualKeyW, SendInput, VkKeyScanW, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
+        KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, MAPVK_VK_TO_VSC, VIRTUAL_KEY, VK_BACK, VK_CONTROL, VK_DELETE, VK_DOWN,
+        VK_END, VK_ESCAPE, VK_F1, VK_HOME, VK_INSERT, VK_LCONTROL, VK_LEFT, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_MENU, VK_NEXT, VK_PRIOR,
+        VK_RCONTROL, VK_RETURN, VK_RIGHT, VK_RMENU, VK_RSHIFT, VK_RWIN, VK_SHIFT, VK_SPACE, VK_TAB, VK_UP,
     };
     use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowTextLengthW, GetWindowTextW};
+
+    /// Side-specific modifier keys, as `GetAsyncKeyState` reports them.
+    const MODIFIERS: [(VIRTUAL_KEY, bool); 8] = [
+        (VK_LSHIFT, false),
+        (VK_RSHIFT, false),
+        (VK_LCONTROL, false),
+        (VK_RCONTROL, true),
+        (VK_LMENU, false),
+        (VK_RMENU, true),
+        (VK_LWIN, true),
+        (VK_RWIN, true),
+    ];
+
+    /// How long to wait for the user to let go of the hotkey before releasing it for them.
+    const RELEASE_WAIT: std::time::Duration = std::time::Duration::from_millis(1000);
 
     pub struct Keyboard;
 
@@ -118,6 +161,33 @@ mod platform {
                 Direction::Click => send(&[down, up]),
             }
         }
+
+        /// `{CLEARFIELD}` as KeePass types it: Home, Shift+End, Backspace (Backspace rather
+        /// than Delete, so a held Ctrl+Alt can never make Ctrl+Alt+Del).
+        pub fn clear_field(&mut self) -> Result<(), String> {
+            self.key(Key::Home, Direction::Click)?;
+            self.modifier(Modifier::Shift, Direction::Press)?;
+            let end = self.key(Key::End, Direction::Click);
+            self.modifier(Modifier::Shift, Direction::Release)?;
+            end?;
+            self.key(Key::Backspace, Direction::Click)
+        }
+
+        /// Waits up to [`RELEASE_WAIT`] for the user to let go of Shift/Ctrl/Alt/Win (still
+        /// down from the hotkey), then sends key-ups for any still down, as KeePass does.
+        pub fn release_held_modifiers(&mut self) -> Result<(), String> {
+            let held = || MODIFIERS.iter().copied().filter(|(vk, _)| unsafe { GetAsyncKeyState(i32::from(vk.0)) } < 0).collect::<Vec<_>>();
+            let start = std::time::Instant::now();
+            let mut down = held();
+            while !down.is_empty() && start.elapsed() < RELEASE_WAIT {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+                down = held();
+            }
+            for (vk, extended) in down {
+                self.vk(vk, extended, Direction::Release)?;
+            }
+            Ok(())
+        }
     }
 
     fn input(vk: VIRTUAL_KEY, scan: u16, flags: KEYBD_EVENT_FLAGS) -> INPUT {
@@ -153,11 +223,39 @@ mod platform {
             Some(String::from_utf16_lossy(&buf[..usize::try_from(copied).unwrap_or(0)]))
         }
     }
+
+    /// The foreground window's handle.
+    pub fn foreground_window() -> Option<isize> {
+        let window = unsafe { GetForegroundWindow() };
+        (!window.is_invalid()).then_some(window.0 as isize)
+    }
+
+    /// UI Automation's focused element: Chrome, Edge, Firefox and native apps report web and
+    /// native text boxes, with `IsPassword` set on password boxes.
+    pub fn focused_field() -> Option<FocusedField> {
+        unsafe {
+            // This thread is ours alone (see `super::focused_field`).
+            let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+            let uia: IUIAutomation = CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
+            let element = uia.GetFocusedElement().ok()?;
+            let is_password = element.CurrentIsPassword().ok()?.as_bool();
+            let value = if is_password {
+                None
+            } else {
+                element
+                    .GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId)
+                    .ok()
+                    .and_then(|p| p.CurrentValue().ok())
+                    .map(|s| s.to_string())
+            };
+            Some(FocusedField { is_password, value })
+        }
+    }
 }
 
 #[cfg(not(windows))]
 mod platform {
-    use super::{Direction, Key, Modifier};
+    use super::{Direction, FocusedField, Key, Modifier};
     use enigo::{Enigo, Keyboard as _, Settings};
 
     pub struct Keyboard(Enigo);
@@ -227,6 +325,74 @@ mod platform {
         pub fn char_key(&mut self, c: char, d: Direction) -> Result<(), String> {
             self.0.key(enigo::Key::Unicode(c), direction(d)).map_err(|e| e.to_string())
         }
+
+        /// `{CLEARFIELD}`: select everything in the field and delete it. macOS text fields
+        /// use Cmd+A (Home/End scroll there); elsewhere Home, Shift+End, Backspace as KeePass.
+        pub fn clear_field(&mut self) -> Result<(), String> {
+            let (select_mod, select_keys): (enigo::Key, &[enigo::Key]) = if cfg!(target_os = "macos") {
+                (enigo::Key::Meta, &[enigo::Key::Unicode('a')])
+            } else {
+                (enigo::Key::Shift, &[enigo::Key::End])
+            };
+            if !cfg!(target_os = "macos") {
+                self.0.key(enigo::Key::Home, enigo::Direction::Click).map_err(|e| e.to_string())?;
+            }
+            self.0.key(select_mod, enigo::Direction::Press).map_err(|e| e.to_string())?;
+            let selected = select_keys.iter().try_for_each(|k| self.0.key(*k, enigo::Direction::Click));
+            self.0.key(select_mod, enigo::Direction::Release).map_err(|e| e.to_string())?;
+            selected.map_err(|e| e.to_string())?;
+            self.0.key(enigo::Key::Backspace, enigo::Direction::Click).map_err(|e| e.to_string())
+        }
+
+        /// Releases Shift/Control/Alt/Command, still down from the hotkey, as KeePass does.
+        pub fn release_held_modifiers(&mut self) -> Result<(), String> {
+            for key in [enigo::Key::Shift, enigo::Key::Control, enigo::Key::Alt, enigo::Key::Meta] {
+                self.0.key(key, enigo::Direction::Release).map_err(|e| e.to_string())?;
+            }
+            Ok(())
+        }
+    }
+
+    /// The frontmost app's process id: typing stops when another app comes to the front.
+    #[cfg(target_os = "macos")]
+    pub fn foreground_window() -> Option<isize> {
+        let app = objc2_app_kit::NSWorkspace::sharedWorkspace().frontmostApplication()?;
+        Some(app.processIdentifier() as isize)
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    pub fn foreground_window() -> Option<isize> {
+        None
+    }
+
+    /// The Accessibility API's focused element. Needs the Accessibility permission, which
+    /// typing keystrokes needs anyway.
+    #[cfg(target_os = "macos")]
+    pub fn focused_field() -> Option<FocusedField> {
+        use objc2_application_services::{AXError, AXUIElement};
+        use objc2_core_foundation::{CFRetained, CFString, CFType};
+        use std::ptr::NonNull;
+
+        fn attribute(element: &AXUIElement, name: &str) -> Option<CFRetained<CFType>> {
+            let mut value: *const CFType = std::ptr::null();
+            let err = unsafe { element.copy_attribute_value(&CFString::from_str(name), NonNull::from(&mut value)) };
+            if err != AXError::Success || value.is_null() {
+                return None;
+            }
+            Some(unsafe { CFRetained::from_raw(NonNull::new(value as *mut CFType)?) })
+        }
+
+        let system = unsafe { AXUIElement::new_system_wide() };
+        let focused = attribute(&system, "AXFocusedUIElement")?.downcast::<AXUIElement>().ok()?;
+        let text = |name: &str| attribute(&focused, name).and_then(|v| v.downcast::<CFString>().ok()).map(|s| s.to_string());
+        let is_password = text("AXSubrole").as_deref() == Some("AXSecureTextField");
+        let value = if is_password { None } else { text("AXValue") };
+        Some(FocusedField { is_password, value })
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    pub fn focused_field() -> Option<FocusedField> {
+        None
     }
 
     /// Title of the frontmost app's frontmost normal window. macOS returns an empty title

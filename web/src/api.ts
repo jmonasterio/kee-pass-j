@@ -345,7 +345,7 @@ export const api = {
 
   autotypeSelected: () => invoke<void>("autotype_selected"),
   quickSearch: (text: string) => invoke<QuickItem[]>("quick_search", { text }),
-  quickType: (db: number, id: Id) => invoke<void>("quick_type", { db, id }),
+  quickType: (db: number, id: Id, passwordOnly = false) => invoke<void>("quick_type", { db, id, passwordOnly }),
   quickCopy: (db: number, id: Id, field: "username" | "password") => invoke<void>("quick_copy", { db, id, field }),
   quickHide: () => invoke<void>("quick_hide"),
   quickOpenMain: () => invoke<void>("quick_open_main"),

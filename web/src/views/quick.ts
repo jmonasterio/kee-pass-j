@@ -25,9 +25,9 @@ function fail(err: unknown): void {
   status.textContent = errorText(err);
 }
 
-async function typeItem(item: QuickItem): Promise<void> {
+async function typeItem(item: QuickItem, passwordOnly = false): Promise<void> {
   try {
-    await api.quickType(item.db, item.id);
+    await api.quickType(item.db, item.id, passwordOnly);
   } catch (err) {
     fail(err);
   }
@@ -68,6 +68,10 @@ function row(item: QuickItem, index: number): HTMLElement {
           "div",
           { class: "quick-actions" },
           button("Type", () => void typeItem(item), { appearance: "primary", size: "small", title: "Type into the app behind (Enter)" }),
+          button("Type password", () => void typeItem(item, true), {
+            size: "small",
+            title: "Type only the password, for pages that ask for it alone (Shift+Enter)",
+          }),
           button("Password", () => void copy(item, "password"), { icon: "copy", size: "small", title: "Copy password (Ctrl+Enter)" }),
           item.username ? button("Username", () => void copy(item, "username"), { icon: "copy", size: "small", title: "Copy username (Ctrl+B)" }) : null,
         )
@@ -117,7 +121,7 @@ function onKey(event: KeyboardEvent): void {
     render();
   } else if (event.key === "Enter" && item) {
     event.preventDefault();
-    void (mod ? copy(item, "password") : typeItem(item));
+    void (mod ? copy(item, "password") : typeItem(item, event.shiftKey));
   } else if (mod && event.key.toLowerCase() === "b" && item) {
     event.preventDefault();
     void copy(item, "username");
@@ -165,7 +169,7 @@ export async function startQuick(container: HTMLElement): Promise<void> {
       context,
       list,
       status,
-      el("div", { class: "quick-foot" }, "Enter types it · Ctrl+Enter copies the password · Ctrl+B copies the username · Esc closes"),
+      el("div", { class: "quick-foot" }, "Enter types it · Shift+Enter types only the password · Ctrl+Enter copies the password · Ctrl+B copies the username · Esc closes"),
     ),
   );
   document.addEventListener("keydown", onKey);

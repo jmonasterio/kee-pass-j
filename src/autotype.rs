@@ -6,6 +6,7 @@ use std::time::Duration;
 use global_hotkey::hotkey::HotKey;
 use thiserror::Error;
 
+pub use crate::input::FocusedField;
 use crate::input::{Direction, Keyboard, Modifier};
 
 /// A named key in an Auto-Type sequence.
@@ -33,6 +34,9 @@ pub enum Key {
 /// Gap between two consecutive tokens while typing.
 const TOKEN_GAP: Duration = Duration::from_millis(10);
 
+/// Pause after `{CLEARFIELD}`, as KeePass, so the field has processed the deletion.
+const CLEAR_PAUSE: Duration = Duration::from_millis(50);
+
 #[derive(Debug, Error)]
 pub enum AutotypeError {
     #[error("unknown placeholder {{{0}}}")]
@@ -51,6 +55,8 @@ pub enum AutotypeError {
     Init(String),
     #[error("keystroke failed: {0}")]
     Input(String),
+    #[error("stopped because a different window came to the front")]
+    WindowChanged,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -83,19 +89,21 @@ impl Modifiers {
 /// One unit of an Auto-Type sequence.
 ///
 /// `Field` carries an upper-case standard name (`USERNAME`, `PASSWORD`, `URL`, `TITLE`,
-/// `NOTES`) or `S:Name` verbatim for custom fields. `Delay` is milliseconds.
+/// `NOTES`) or `S:Name` verbatim for custom fields. `Delay` is milliseconds. `ClearField`
+/// empties the focused text field.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
     Field(String),
     Key(Key),
     Char(char),
     Delay(u64),
+    ClearField,
     Modified(Modifiers, Box<Token>),
 }
 
 /// Parses a KeePass 2.x Auto-Type sequence.
 ///
-/// Placeholders: `{USERNAME}` `{PASSWORD}` `{URL}` `{TITLE}` `{NOTES}` `{S:Field Name}`,
+/// Placeholders: `{USERNAME}` `{PASSWORD}` `{URL}` `{TITLE}` `{NOTES}` `{S:Field Name}`, `{CLEARFIELD}`,
 /// `{TAB}` `{ENTER}` `{SPACE}` `{BACKSPACE}` `{DELETE}` `{ESC}` `{HOME}` `{END}` `{UP}` `{DOWN}`
 /// `{LEFT}` `{RIGHT}` `{F1}`..`{F12}`, `{TAB 3}` repeat counts, `{DELAY 500}`,
 /// `{{}` `{}}` `{+}` `{^}` `{%}` `{(}` `{)}` escapes.
@@ -213,6 +221,9 @@ fn placeholder(body: &str) -> Result<Vec<Token>, AutotypeError> {
             .ok_or_else(|| AutotypeError::InvalidCount(body.to_string()))?;
         return Ok(vec![Token::Delay(ms)]);
     }
+    if upper == "CLEARFIELD" && arg.is_none() {
+        return Ok(vec![Token::ClearField]);
+    }
     let token = match upper.as_str() {
         "USERNAME" | "PASSWORD" | "URL" | "TITLE" | "NOTES" => Token::Field(upper.clone()),
         "TAB" => Token::Key(Key::Tab),
@@ -249,15 +260,65 @@ fn placeholder(body: &str) -> Result<Vec<Token>, AutotypeError> {
 
 /// Types `tokens` into the focused window. `resolve` maps field names to values; a field
 /// that resolves to `None` types nothing, matching KeePass.
+///
+/// Like KeePass, modifier keys still held from the hotkey are released first (otherwise the
+/// typed letters arrive as Ctrl/Alt shortcuts), and typing stops as soon as another window
+/// comes to the front, so the rest of the sequence never lands in the wrong place.
 pub fn perform(tokens: &[Token], resolve: &dyn Fn(&str) -> Option<String>) -> Result<(), AutotypeError> {
     let mut keyboard = Keyboard::new().map_err(AutotypeError::Init)?;
+    keyboard.release_held_modifiers().map_err(AutotypeError::Input)?;
+    let target = crate::input::foreground_window();
     for (i, token) in tokens.iter().enumerate() {
         if i > 0 {
             sleep(TOKEN_GAP);
         }
+        if target.is_some() && crate::input::foreground_window() != target {
+            return Err(AutotypeError::WindowChanged);
+        }
         type_token(&mut keyboard, token, resolve).map_err(AutotypeError::Input)?;
     }
     Ok(())
+}
+
+/// What the focused field is, as far as the OS accessibility API tells (Windows UI
+/// Automation, macOS Accessibility). `None` where unavailable.
+pub fn focused_field() -> Option<FocusedField> {
+    crate::input::focused_field()
+}
+
+/// Adapts a sequence used as the default (no sequence of the entry's own) to the field that
+/// has the focus:
+/// - every `{USERNAME}` and `{PASSWORD}` is preceded by `{CLEARFIELD}`, so text a site or
+///   browser already put there is replaced, not appended to;
+/// - a sequence starting `{USERNAME}{TAB}` skips that part when the focus is in a password
+///   field (pages that ask only for the password), and skips only the username when the
+///   focused field already holds this username.
+pub fn adapt_default(tokens: &[Token], focused: Option<&FocusedField>, username: &str) -> Vec<Token> {
+    let user = Token::Field("USERNAME".into());
+    let mut rest = tokens;
+    let starts_with_user = rest.first() == Some(&user);
+    if let (true, Some(f)) = (starts_with_user, focused) {
+        let holds_username = !username.trim().is_empty()
+            && f.value.as_deref().is_some_and(|v| v.trim().eq_ignore_ascii_case(username.trim()));
+        if f.is_password && rest.get(1) == Some(&Token::Key(Key::Tab)) {
+            rest = &rest[2..];
+        } else if holds_username {
+            rest = &rest[1..];
+        }
+    }
+    let mut out = Vec::with_capacity(rest.len() + 2);
+    for t in rest {
+        if matches!(t, Token::Field(name) if name == "USERNAME" || name == "PASSWORD") {
+            out.push(Token::ClearField);
+        }
+        out.push(t.clone());
+    }
+    out
+}
+
+/// What "Type password" types: the password into the focused field, then Enter.
+pub fn password_only() -> Vec<Token> {
+    vec![Token::ClearField, Token::Field("PASSWORD".into()), Token::Key(Key::Enter)]
 }
 
 fn type_token(kb: &mut Keyboard, token: &Token, resolve: &dyn Fn(&str) -> Option<String>) -> Result<(), String> {
@@ -270,6 +331,10 @@ fn type_token(kb: &mut Keyboard, token: &Token, resolve: &dyn Fn(&str) -> Option
             }
         }
         Token::Key(key) => kb.key(*key, Direction::Click)?,
+        Token::ClearField => {
+            kb.clear_field()?;
+            sleep(CLEAR_PAUSE);
+        }
         Token::Char(c) => {
             let mut buf = [0u8; 4];
             kb.text(c.encode_utf8(&mut buf))?;
@@ -352,6 +417,19 @@ pub fn title_matches(entry_title: &str, window_title: &str) -> bool {
     window_title.to_lowercase().contains(&entry.to_lowercase())
 }
 
+/// KeePass's "URL host in window title": the host of the entry's URL, without a leading
+/// `www.`, appears in the window title, case-insensitive. Browsers that show the address in
+/// the title (and apps named after their site) then match even when the entry title differs.
+pub fn url_host_matches(url: &str, window_title: &str) -> bool {
+    let rest = url.trim();
+    let rest = rest.split_once("://").map_or(rest, |(_, r)| r);
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+    let host = host.split(':').next().unwrap_or("").to_lowercase();
+    let host = host.strip_prefix("www.").unwrap_or(&host);
+    host.contains('.') && host.len() >= 4 && window_title.to_lowercase().contains(host)
+}
+
 /// Parses "Ctrl+Alt+A", "Cmd+Shift+F1" and similar into a global hotkey.
 /// Accepted modifiers: Ctrl/Control, Alt/Option, Shift, Cmd/Command/Super/Meta,
 /// CmdOrCtrl. The final part is the key name (letters, digits, F1..F24, Space, Enter, ...).
@@ -403,6 +481,46 @@ mod tests {
     fn delay() {
         assert_eq!(parse_sequence("{DELAY 500}").unwrap(), vec![Token::Delay(500)]);
         assert!(matches!(parse_sequence("{DELAY}"), Err(AutotypeError::InvalidCount(_))));
+    }
+
+    #[test]
+    fn clearfield() {
+        assert_eq!(parse_sequence("{CLEARFIELD}{PASSWORD}").unwrap(), vec![Token::ClearField, Token::Field("PASSWORD".into())]);
+    }
+
+    fn field(name: &str) -> Token {
+        Token::Field(name.into())
+    }
+
+    #[test]
+    fn adapt_default_to_focused_field() {
+        let seq = parse_sequence("{USERNAME}{TAB}{PASSWORD}{ENTER}").unwrap();
+        let full = vec![Token::ClearField, field("USERNAME"), Token::Key(Key::Tab), Token::ClearField, field("PASSWORD"), Token::Key(Key::Enter)];
+        // Nothing known about the field: clear before each value.
+        assert_eq!(adapt_default(&seq, None, "me@x.com"), full);
+        let text = |v: &str| FocusedField { is_password: false, value: Some(v.into()) };
+        // A username field with some other text: still typed, after clearing.
+        assert_eq!(adapt_default(&seq, Some(&text("old")), "me@x.com"), full);
+        // Already holds this username: go straight to the password.
+        assert_eq!(
+            adapt_default(&seq, Some(&text(" ME@x.com ")), "me@x.com"),
+            vec![Token::Key(Key::Tab), Token::ClearField, field("PASSWORD"), Token::Key(Key::Enter)]
+        );
+        // Focus in a password field: password-only page.
+        let pw = FocusedField { is_password: true, value: None };
+        assert_eq!(adapt_default(&seq, Some(&pw), "me@x.com"), vec![Token::ClearField, field("PASSWORD"), Token::Key(Key::Enter)]);
+        // A sequence of another shape is only given the clears.
+        let other = parse_sequence("{PASSWORD}{ENTER}").unwrap();
+        assert_eq!(adapt_default(&other, Some(&pw), "me"), vec![Token::ClearField, field("PASSWORD"), Token::Key(Key::Enter)]);
+    }
+
+    #[test]
+    fn url_host_in_title() {
+        assert!(url_host_matches("https://www.Netflix.com/login", "netflix.com - Sign in - Microsoft Edge"));
+        assert!(url_host_matches("user@intranet.corp.local:8443", "Intranet.Corp.local portal"));
+        assert!(!url_host_matches("https://netflix.com", "Netflix - Microsoft Edge"));
+        assert!(!url_host_matches("", "anything"));
+        assert!(!url_host_matches("localhost", "localhost"));
     }
 
     #[test]
