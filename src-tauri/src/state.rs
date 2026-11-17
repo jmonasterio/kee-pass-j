@@ -116,9 +116,12 @@ impl AppState {
 
     pub fn unlock_view(&self) -> UnlockView {
         let label = self.quick_unlock_label();
+        let open: Vec<&Path> = self.dbs.iter().map(|d| d.vault.path()).collect();
         let recent = self
             .picker
             .iter()
+            // Already open: listed in the header instead, since opening it again is refused.
+            .filter(|p| !open.contains(&p.as_path()))
             .map(|p| RecentItem {
                 path: p.display().to_string(),
                 name: file_stem(p),
@@ -137,12 +140,12 @@ impl AppState {
         let selected = self
             .picker_selected
             .as_ref()
-            .filter(|p| self.picker.contains(p))
+            .filter(|p| self.picker.contains(p) && !open.contains(&p.as_path()))
             .map(|p| p.display().to_string());
         UnlockView {
             recent,
             selected,
-            has_open_dbs: !self.dbs.is_empty(),
+            open_dbs: self.dbs.iter().map(|d| d.vault.name()).collect(),
             pending_new: self.pending_new_db.as_ref().map(|p| p.display().to_string()),
             quick_unlock_label: label,
         }

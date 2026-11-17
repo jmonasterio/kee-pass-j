@@ -56,7 +56,8 @@ export interface RecentItem {
 export interface UnlockView {
   recent: RecentItem[];
   selected: string | null;
-  hasOpenDbs: boolean;
+  /** Names of the databases already open; empty on first unlock. */
+  openDbs: string[];
   pendingNew: string | null;
   /** "Touch ID" / "Windows Hello" when quick unlock is available and turned on. */
   quickUnlockLabel: string | null;

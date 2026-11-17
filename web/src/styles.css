@@ -170,6 +170,10 @@ fluent-menu-item.danger-item {
   gap: 8px;
 }
 
+.unlock-header.adding {
+  align-items: flex-start;
+}
+
 .app-title {
   font-size: var(--fontSizeBase600);
   line-height: var(--lineHeightBase600);

@@ -29,7 +29,8 @@ pub struct RecentItem {
 pub struct UnlockView {
     pub recent: Vec<RecentItem>,
     pub selected: Option<String>,
-    pub has_open_dbs: bool,
+    /// Names of the databases already open; empty on first unlock.
+    pub open_dbs: Vec<String>,
     pub pending_new: Option<String>,
     /// "Touch ID" / "Windows Hello" when quick unlock is available and turned on.
     pub quick_unlock_label: Option<&'static str>,

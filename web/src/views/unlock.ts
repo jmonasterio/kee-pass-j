@@ -18,7 +18,21 @@ export function renderUnlock(root: HTMLElement, next: UnlockView): void {
   const paths = new Set(next.recent.map((r) => r.path));
   selected = next.selected ?? (previous && paths.has(previous) ? previous : null);
 
-  const header = el("div", { class: "unlock-header" }, el("h1", { class: "app-title" }, "Our Logins"));
+  // Opening a second database: say so, name what is already open, and offer the way back.
+  const adding = next.openDbs.length > 0;
+  const header = adding
+    ? el(
+        "div",
+        { class: "unlock-header adding" },
+        button(null, () => void back(), { icon: "back", appearance: "subtle", title: "Back to your open databases (Esc)" }),
+        el(
+          "div",
+          null,
+          el("h1", { class: "app-title" }, "Open another database"),
+          el("div", { class: "muted" }, `${next.openDbs.join(", ")} stay${next.openDbs.length === 1 ? "s" : ""} open. This one opens in a new tab.`),
+        ),
+      )
+    : el("div", { class: "unlock-header" }, el("h1", { class: "app-title" }, "Our Logins"));
   const body = next.pendingNew ? createForm(next.pendingNew) : openForm(next, selected === previous ? keptPassword : "");
 
   setChildren(
@@ -209,14 +223,14 @@ function openForm(v: UnlockView, keptPassword: string): HTMLElement {
   const list =
     v.recent.length > 0
       ? el("div", { class: "recent-list", attrs: { role: "listbox", "aria-label": "Recent databases" } }, v.recent.map(recentRow))
-      : el("p", { class: "muted empty-recent" }, "No recent databases. Open a file or create a new one.");
+      : el("p", { class: "muted empty-recent" }, v.openDbs.length > 0 ? "No other recent databases. Open a file or create a new one." : "No recent databases. Open a file or create a new one.");
 
   updateSelection();
 
   return el(
     "div",
     { class: "stack" },
-    el("div", { class: "section-label" }, "Recent databases"),
+    el("div", { class: "section-label" }, v.openDbs.length > 0 ? "Other recent databases" : "Recent databases"),
     list,
     quickButton,
     field("Master password", password),
@@ -225,7 +239,6 @@ function openForm(v: UnlockView, keptPassword: string): HTMLElement {
       { class: "button-row" },
       keyfileButton,
       el("div", { class: "spacer" }),
-      v.hasOpenDbs ? button("Cancel", () => void back(), { title: "Back to your open databases (Esc)" }) : null,
       unlockButton,
     ),
     error,
@@ -296,7 +309,7 @@ export function unlockKeydown(event: KeyboardEvent): void {
     if (view.pendingNew) {
       event.preventDefault();
       void refresh(api.cancelCreate());
-    } else if (view.hasOpenDbs) {
+    } else if (view.openDbs.length > 0) {
       event.preventDefault();
       void back();
     }
