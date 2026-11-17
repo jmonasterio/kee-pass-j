@@ -1,6 +1,6 @@
 [package]
 name = "ourlogins-app"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 rust-version = "1.89"
 description = "Our Logins desktop app (Tauri shell around the ourlogins library)"
