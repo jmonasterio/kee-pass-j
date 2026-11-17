@@ -82,6 +82,8 @@ fn main() {
     }
 
     tauri::Builder::default()
+        // Must be the first plugin: a second launch exits here and brings this window forward.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| typing::bring_main_to_front(app)))
         .plugin(tauri_plugin_dialog::init())
         .plugin(navigation_guard())
         .manage(state::Shared::new())
