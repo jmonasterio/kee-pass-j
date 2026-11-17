@@ -116,3 +116,21 @@ jobs:
             dist/OurLogins-windows-x64/OurLogins-windows-x64.exe
             dist/OurLogins-linux-x86_64/OurLogins-linux-x86_64.AppImage
             dist/OurLogins-linux-x86_64/OurLogins-linux-amd64.deb
+
+  site-links:
+    # keypass.argw.com links to releases/latest/download/<name>: fails (and GitHub emails) when a
+    # release renames or drops a file the download page still links to.
+    needs: [release]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every download link on keypass.argw.com resolves
+        run: |
+          links=$(curl -sf https://keypass.argw.com/ | grep -o 'https://github.com/[^"]*/releases/latest/download/[^"]*' | sort -u)
+          [ -n "$links" ] || { echo "no download links found on the page"; exit 1; }
+          bad=0
+          for u in $links; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' -L -r 0-0 "$u")
+            echo "$code $u"
+            case "$code" in 200|206) ;; *) bad=1 ;; esac
+          done
+          exit $bad
