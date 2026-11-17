@@ -1044,9 +1044,20 @@ fn backup_subdir(policy: &BackupPolicy, db_path: &Path) -> Result<(PathBuf, Stri
     Ok((dir, stem))
 }
 
+/// `<stem>-YYYYMMDD-HHMMSS.kdbx` for `at`, moved one second later while that name is taken.
+/// Names have one-second resolution: the pre-save copy of a file written in the same second
+/// as the save (a file copied in just before opening, or two saves in one second) would
+/// otherwise be overwritten by the next backup.
 fn backup_file_path(policy: &BackupPolicy, db_path: &Path, at: DateTime<Local>) -> Result<PathBuf, VaultError> {
     let (dir, stem) = backup_subdir(policy, db_path)?;
-    Ok(dir.join(format!("{}-{}.{}", stem, at.format("%Y%m%d-%H%M%S"), BACKUP_EXT)))
+    let mut at = at;
+    loop {
+        let path = dir.join(format!("{}-{}.{}", stem, at.format("%Y%m%d-%H%M%S"), BACKUP_EXT));
+        if !path.exists() {
+            return Ok(path);
+        }
+        at += chrono::Duration::seconds(1);
+    }
 }
 
 /// A copy of a vault taken by `Vault::start_save`; `run` writes it.
