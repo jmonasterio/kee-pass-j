@@ -58,7 +58,7 @@ pub struct GroupItem {
     pub depth: usize,
     /// Entries directly in this folder.
     pub entry_count: usize,
-    /// Colour name the user picked; `None` = automatic.
+    /// Color name the user picked; `None` = automatic.
     pub color: Option<String>,
 }
 

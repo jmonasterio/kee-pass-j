@@ -221,8 +221,13 @@ impl AppState {
                 Filter::Group(g) => db.vault.entries_in(g),
             }
         };
-        // The vault already orders stale entries last; keep that invariant here too.
-        list.sort_by_key(|e| e.stale);
+        // The vault already orders stale entries last; keep that invariant here too. The Recycle
+        // Bin lists accounts first, then documents, under one heading each.
+        if search.is_empty() && db.filter == Filter::RecycleBin {
+            list.sort_by_key(|e| (e.document, e.stale));
+        } else {
+            list.sort_by_key(|e| e.stale);
+        }
 
         if db.selected_entry.is_some_and(|id| !list.iter().any(|e| e.id == id)) {
             db.selected_entry = None;

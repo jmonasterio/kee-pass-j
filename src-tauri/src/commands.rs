@@ -21,7 +21,7 @@ use crate::typing;
 
 type R<T> = Result<T, String>;
 
-/// Folder colours the user can pick; the frontend maps each name to a light and a dark shade.
+/// Folder colors the user can pick; the frontend maps each name to a light and a dark shade.
 const FOLDER_COLORS: [&str; 10] = ["red", "orange", "yellow", "lime", "green", "teal", "cyan", "blue", "purple", "pink"];
 
 pub struct Platform {
@@ -433,17 +433,17 @@ pub async fn rename_group(state: State<'_, Shared>, id: String, name: String) ->
     mutate(&mut st, "Could not rename the folder", |db| db.vault.rename_group(gid, &name))
 }
 
-/// Sets a folder's colour (one of `FOLDER_COLORS`), or back to automatic with `None`.
+/// Sets a folder's color (one of `FOLDER_COLORS`), or back to automatic with `None`.
 #[tauri::command]
 pub async fn set_group_color(state: State<'_, Shared>, id: String, color: Option<String>) -> R<MainView> {
     let gid = parse_group_id(&id)?;
     if let Some(c) = color.as_deref() {
         if !FOLDER_COLORS.contains(&c) {
-            return Err(format!("Unknown colour {c}."));
+            return Err(format!("Unknown color {c}."));
         }
     }
     let mut st = state.lock();
-    mutate(&mut st, "Could not change the colour", |db| db.vault.set_group_color(gid, color.as_deref()))
+    mutate(&mut st, "Could not change the color", |db| db.vault.set_group_color(gid, color.as_deref()))
 }
 
 #[tauri::command]

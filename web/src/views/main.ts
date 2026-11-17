@@ -309,7 +309,7 @@ function folderMenu(v: MainView, f: GroupItem): HTMLElement {
       "fluent-menu-list",
       null,
       el("fluent-menu-item", { on: { click: () => renameGroup(f) } }, "Rename…"),
-      el("fluent-menu-item", { on: { click: () => pickColor(f) } }, "Colour…"),
+      el("fluent-menu-item", { on: { click: () => pickColor(f) } }, "Color…"),
       el("fluent-menu-item", { on: { click: () => addGroup(v, f) } }, "New folder inside"),
       el("fluent-menu-item", { class: "danger-item", on: { click: () => void deleteGroup(v, f) } }, "Delete folder…"),
     ),
@@ -392,7 +392,7 @@ function changeMasterPassword(index: number, tab: TabItem): void {
   current.focus();
 }
 
-/** Hue for each folder colour name; the CSS turns a hue into light/dark tile shades. */
+/** Hue for each folder color name; the CSS turns a hue into light/dark tile shades. */
 const COLOR_HUES: Record<FolderColor, number> = {
   red: 4,
   orange: 28,
@@ -434,10 +434,10 @@ function pickColor(f: GroupItem): void {
     "div",
     { class: "color-picker" },
     el("div", { class: "swatches" }, FOLDER_COLORS.map(swatch)),
-    el("div", { class: "muted small" }, f.color ? "" : "This folder uses an automatic colour."),
+    el("div", { class: "muted small" }, f.color ? "" : "This folder uses an automatic color."),
   );
   const handle = openDialog({
-    title: `Colour for ${f.name}`,
+    title: `Color for ${f.name}`,
     class: "narrow-dialog",
     body,
     actions: [button("Automatic", () => void choose(null), { appearance: "subtle" }), button("Cancel", () => handle.close())],
@@ -563,7 +563,7 @@ async function deleteGroup(v: MainView, group: GroupItem): Promise<void> {
 async function emptyRecycleBin(v: MainView): Promise<void> {
   const ok = await confirmDialog({
     title: "Empty Recycle Bin?",
-    message: `${plural(v.counts.recycleBin, "account")} in the Recycle Bin will be deleted for good. This can't be undone.`,
+    message: `${plural(v.counts.recycleBin, "item")} in the Recycle Bin will be deleted for good. This can't be undone.`,
     confirm: "Empty Recycle Bin",
     danger: true,
   });
@@ -577,7 +577,7 @@ async function emptyRecycleBin(v: MainView): Promise<void> {
 }
 
 /** Tile for a row or the details: the first letter of an account, or a page for a document.
- *  Coloured by the entry's folder unless tile colours are off; entries outside any folder stay neutral. */
+ *  Colored by the entry's folder unless tile colors are off; entries outside any folder stay neutral. */
 function avatar(v: MainView, title: string, folder: Id | null, size: "small" | "large", document = false): HTMLElement {
   const letter = (title.match(/[\p{L}\p{N}]/u)?.[0] ?? "?").toUpperCase();
   const f = v.tileColors === "folder" && folder ? v.folders.find((g) => g.id === folder) : undefined;
@@ -646,9 +646,16 @@ function renderList(v: MainView): void {
     return;
   }
   const rows: Child[] = [];
+  // Recycle Bin: accounts, then documents (the backend sorts them so), each under a heading.
+  const binSections = v.filter.kind === "recycleBin" && !v.search;
   let dividerAdded = false;
+  let section: boolean | null = null;
   for (const entry of v.entries) {
-    if (entry.stale && !dividerAdded) {
+    if (binSections && entry.document !== section) {
+      section = entry.document;
+      const count = v.entries.filter((e) => e.document === entry.document).length;
+      rows.push(el("div", { class: "section-label list-section" }, `${entry.document ? "Documents" : "Accounts"} (${count})`));
+    } else if (!binSections && entry.stale && !dividerAdded) {
       if (rows.length > 0) rows.push(el("fluent-divider", { class: "stale-divider" }));
       dividerAdded = true;
     }

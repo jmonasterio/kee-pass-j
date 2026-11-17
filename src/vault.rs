@@ -24,7 +24,7 @@ const RECYCLE_BIN_NAME: &str = "Recycle Bin";
 const RECYCLE_BIN_ICON: usize = 43;
 const DEFAULT_HISTORY_MAX_ITEMS: usize = 10;
 const BACKUP_EXT: &str = "kdbx";
-/// Group custom-data key for the folder colour shown in Our Logins; stored in the file.
+/// Group custom-data key for the folder color shown in Our Logins; stored in the file.
 const GROUP_COLOR_KEY: &str = "OurLogins.Color";
 /// String field that marks Our Logins "document" entries (value `KIND_DOCUMENT`). A string
 /// field like `KPJ_Stale`: entry custom data does not survive a save in keepass 0.17.
@@ -143,7 +143,7 @@ pub struct GroupView {
     pub name: String,
     pub depth: usize,
     pub is_recycle_bin: bool,
-    /// Colour name chosen by the user (`OurLogins.Color` group custom data); `None` = automatic.
+    /// Color name chosen by the user (`OurLogins.Color` group custom data); `None` = automatic.
     pub color: Option<String>,
 }
 
@@ -592,7 +592,7 @@ impl Vault {
         views
     }
 
-    /// Sets or clears (`None`) the group's colour, kept in the file so it travels with the database.
+    /// Sets or clears (`None`) the group's color, kept in the file so it travels with the database.
     pub fn set_group_color(&mut self, id: GroupId, color: Option<&str>) -> Result<(), VaultError> {
         let mut g = self.db.group_mut(id.into()).ok_or(VaultError::GroupNotFound(id))?;
         match color {

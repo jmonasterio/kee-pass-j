@@ -32,9 +32,9 @@ right-click it and choose Open. Pushing a `v*` tag publishes both as a GitHub re
 **Everyday use**
 
 - Sidebar filters: All accounts, Not working, Documents, folders, Recycle Bin. Folders can
-  be added, renamed, coloured and deleted (with their contents, to the Recycle Bin); two
+  be added, renamed, colored and deleted (with their contents, to the Recycle Bin); two
   folders side by side cannot have the same name (ignoring case). Letter tiles take their
-  folder's colour. Search is always visible (Ctrl+K).
+  folder's color. Search is always visible (Ctrl+K).
 - "Add account" screen: site, URL, username or email, password (generator prefilled),
   recovery PIN and phone, security questions, notes. If the site already exists it offers
   to replace the old entry and flags that one "not working".
@@ -102,7 +102,7 @@ right-click it and choose Open. Pushing a `v*` tag publishes both as a GitHub re
   `<name>-kdbx3-original.kdbx` copy from before its first save.
 - Extra data lives in ordinary fields that other clients show and keep: "not working" is the
   custom field `KPJ_Stale = 1`, a document has `OurLogins.Kind = document`, and a folder
-  colour is group custom data `OurLogins.Color`.
+  color is group custom data `OurLogins.Color`.
 
 ## Not included
 

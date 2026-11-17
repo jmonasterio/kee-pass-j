@@ -80,7 +80,7 @@ export interface GroupItem {
   depth: number;
   /** Entries directly in this folder. */
   entryCount: number;
-  /** Colour the user picked; null = automatic. */
+  /** Color the user picked; null = automatic. */
   color: FolderColor | null;
 }
 export const FOLDER_COLORS = ["red", "orange", "yellow", "lime", "green", "teal", "cyan", "blue", "purple", "pink"] as const;

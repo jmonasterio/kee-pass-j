@@ -200,7 +200,7 @@ vanilla TypeScript plus Fluent UI Web Components v3 (`web/src`), bundled by esbu
   only after a Touch ID check (the module doc explains why the Keychain itself cannot require
   Touch ID for an ad-hoc signed app). The first password unlock of a database stores it; a
   wrong stored password (changed elsewhere) is forgotten.
-- Folder colours live in the file as group custom data `OurLogins.Color`.
+- Folder colors live in the file as group custom data `OurLogins.Color`.
 - Documents are entries with the string field `OurLogins.Kind = document` (entry custom
   data does not survive a save with the `keepass` crate 0.17). Their notes render as
   Markdown through `web/src/markdown.ts`: markdown-it tokens (raw HTML off) become DOM

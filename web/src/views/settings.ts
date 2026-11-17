@@ -47,7 +47,7 @@ export async function openSettings(): Promise<void> {
     attrs: { spellcheck: "false", "aria-label": "Default typing sequence" },
   });
   const reopenLast = toggle("Reopen the last database", current.reopenLast);
-  const folderColors = toggle("Colour tiles by folder", current.tileColors === "folder");
+  const folderColors = toggle("Color tiles by folder", current.tileColors === "folder");
   const notesMonospace = toggle("Monospace notes", current.notesMonospace);
   const quickUnlock = current.quickUnlockName ? toggle(`Unlock with ${current.quickUnlockName}`, current.quickUnlock) : null;
   const clearChoices = [0, 10, 20, 30, 60, 120];
@@ -149,8 +149,8 @@ export async function openSettings(): Promise<void> {
       ),
       row(
         "folder",
-        "Colour tiles by folder",
-        "Each account's letter tile takes its folder's colour. Pick a folder's colour from its ⋯ menu in the sidebar.",
+        "Color tiles by folder",
+        "Each account's letter tile takes its folder's color. Pick a folder's color from its ⋯ menu in the sidebar.",
         folderColors,
       ),
     ),

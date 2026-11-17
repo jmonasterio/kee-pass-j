@@ -30,14 +30,14 @@ pub struct RecentDb {
     pub keyfile: Option<PathBuf>,
 }
 
-/// What the letter tiles in the account list are coloured by.
+/// What the letter tiles in the account list are colored by.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TileColors {
-    /// Each folder's colour (chosen by the user or picked automatically).
+    /// Each folder's color (chosen by the user or picked automatically).
     #[default]
     Folder,
-    /// One neutral colour for every tile.
+    /// One neutral color for every tile.
     Off,
 }
 

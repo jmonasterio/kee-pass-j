@@ -74,6 +74,10 @@ p {
   justify-content: flex-end;
 }
 
+.list-section {
+  padding: 12px 12px 4px;
+}
+
 .section-label {
   font-size: var(--fontSizeBase200);
   font-weight: var(--fontWeightSemibold);
@@ -448,7 +452,7 @@ html[data-os="macos"] .sidebar-top {
   padding-left: calc(12px + var(--depth, 0) * 16px);
 }
 
-/* Legend for the tile colours: the folder's colour as a dot. */
+/* Legend for the tile colors: the folder's color as a dot. */
 .folder-dot {
   width: 12px;
   height: 12px;
@@ -605,7 +609,7 @@ html[data-os="macos"] .list-toolbar {
   gap: 2px;
 }
 
-/* Letter tiles; hue comes from the account's folder colour. */
+/* Letter tiles; hue comes from the account's folder color. */
 .avatar {
   flex-shrink: 0;
   display: grid;
@@ -644,7 +648,7 @@ html[data-os="macos"] .list-toolbar {
   }
 }
 
-/* No folder, or tile colours turned off. */
+/* No folder, or tile colors turned off. */
 .avatar.neutral {
   background: var(--colorNeutralBackground3);
   color: var(--colorNeutralForeground2);
@@ -786,7 +790,7 @@ html[data-os="macos"] .detail-scroll {
   margin: 0;
 }
 
-/* Folder colour picker. */
+/* Folder color picker. */
 .swatches {
   display: grid;
   grid-template-columns: repeat(5, 40px);
