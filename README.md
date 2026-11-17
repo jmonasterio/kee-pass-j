@@ -146,3 +146,30 @@ Checks: `cargo test -p ourlogins --lib` and `npm run check` (TypeScript).
 
 Up to version 0.2 the app was called KeePassJ. On first start it moves the old settings and
 backups folder (`logonpro\KeePassJ` / `com.logonpro.KeePassJ`) to the new `OurLogins` one.
+
+## CI builds and releases
+
+`.github/workflows/build.yml` builds and tests on Linux, Windows and macOS for every push
+to `main`, every pull request, and every `v*` tag. Only a tag publishes a release, so
+merging a fix to `main` does not change what the Download links serve.
+
+Publish a release: bump the version in `Cargo.toml`, `src-tauri/Cargo.toml` and
+`src-tauri/tauri.conf.json`, run `cargo update -w`, commit, then
+
+```
+git tag v0.3.2
+git push origin main v0.3.2
+```
+
+The `release` job runs only when all three platform jobs pass.
+
+Force a build without a new commit:
+
+```
+gh workflow run build.yml --ref main          # any branch; never publishes a release
+gh run rerun <run-id> --failed                # retry failed or cancelled jobs, e.g. macOS
+gh run list --workflow build.yml -L 5         # find <run-id>
+```
+
+Rerunning a `v*` tag's run creates that release, or uploads its files to the existing one,
+once all three platform jobs pass.
