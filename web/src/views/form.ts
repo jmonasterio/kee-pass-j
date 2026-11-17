@@ -60,8 +60,7 @@ export async function openForm(mode: FormMode, notesMonospace: boolean): Promise
   const title = textInput(entry.title, { autofocus: true, placeholder: isDoc ? "e.g. Passport" : "e.g. Netflix" });
   const url = textInput(entry.url, { placeholder: "netflix.com" });
   const username = textInput(entry.username);
-  // The password is generated, so it starts in clear text like a normal field.
-  const password = passwordBox({ value: entry.password, shown: true, large: true });
+  const password = passwordBox({ value: entry.password, large: true });
   const recoveryPin = passwordBox({ value: entry.recoveryPin });
   const recoveryPhone = textInput(entry.recoveryPhone);
   const securityQuestions = textArea(entry.securityQuestions, { secret: true });
@@ -323,6 +322,8 @@ export async function openForm(mode: FormMode, notesMonospace: boolean): Promise
       footer,
     ),
   );
+  // A click beside the drawer must not throw away what was typed; Close, Cancel and Esc still do.
+  drawer.clickHandler = () => true;
   drawer.addEventListener("keydown", (event: KeyboardEvent) => {
     if (event.key !== "Enter" || event.isComposing) return;
     const target = event.target as HTMLElement | null;

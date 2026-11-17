@@ -20,14 +20,11 @@ function showToggleState(toggle: ButtonEl, shown: boolean): void {
   toggle.setAttribute("aria-label", toggle.title);
 }
 
-/**
- * A password box. `shown` starts it in clear text (the generated password in the account
- * form); `large` is the bigger font used there.
- */
-export function passwordBox(opts: { value?: string; placeholder?: string; shown?: boolean; large?: boolean } = {}): TextInputEl {
+/** A password box, hidden until its eye button is clicked. `large` is the bigger font used in the account form. */
+export function passwordBox(opts: { value?: string; placeholder?: string; large?: boolean } = {}): TextInputEl {
   const input = el("fluent-text-input", {
     class: "password-box" + (opts.large ? " large" : ""),
-    type: opts.shown ? "text" : "password",
+    type: "password",
     value: opts.value ?? "",
     placeholder: opts.placeholder ?? "",
     autocomplete: "off",
@@ -51,7 +48,7 @@ export function passwordBox(opts: { value?: string; placeholder?: string; shown?
     },
     { icon: "eye", appearance: "transparent", size: "small", class: "reveal-toggle" },
   );
-  showToggleState(toggle, !!opts.shown);
+  showToggleState(toggle, false);
   toggle.setAttribute("slot", "end");
   // Clicking the button must not take focus away from the text.
   toggle.addEventListener("mousedown", (event) => event.preventDefault());
