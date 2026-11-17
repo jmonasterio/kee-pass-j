@@ -56,15 +56,52 @@ jobs:
           npm run check
           npm run build
       - name: Build single exe
-        run: cargo build --release -p ourlogins-app
+        run: |
+          cargo build --release -p ourlogins-app
+          mkdir dist
+          copy target\release\OurLogins.exe dist\OurLogins-windows-x64.exe
       - uses: actions/upload-artifact@v4
         with:
           name: OurLogins-windows-x64
-          path: target/release/OurLogins.exe
+          path: dist/OurLogins-windows-x64.exe
+
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: System libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev patchelf
+      - name: Test
+        run: cargo test -p ourlogins --lib
+      - name: Frontend
+        run: |
+          npm ci
+          npm run check
+      - name: Bundle AppImage and .deb
+        # beforeBuildCommand (npm run build) runs inside tauri build.
+        run: npx tauri build --bundles appimage,deb
+      - name: Stable names
+        # Fixed file names, so releases/latest/download/<name> links keep working across versions.
+        run: |
+          mkdir -p dist
+          cp target/release/bundle/appimage/*.AppImage dist/OurLogins-linux-x86_64.AppImage
+          cp target/release/bundle/deb/*.deb dist/OurLogins-linux-amd64.deb
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OurLogins-linux-x86_64
+          path: dist/*
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [macos, windows]
+    needs: [macos, windows, linux]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -76,4 +113,6 @@ jobs:
         with:
           files: |
             dist/OurLogins-macos-universal/OurLogins-macos-universal.zip
-            dist/OurLogins-windows-x64/OurLogins.exe
+            dist/OurLogins-windows-x64/OurLogins-windows-x64.exe
+            dist/OurLogins-linux-x86_64/OurLogins-linux-x86_64.AppImage
+            dist/OurLogins-linux-x86_64/OurLogins-linux-amd64.deb
