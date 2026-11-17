@@ -12,11 +12,12 @@ use ourlogins::generator::{self, GenOptions};
 use ourlogins::settings;
 use ourlogins::vault::{self, CustomField, EntryEdit, EntryView, Vault};
 
+use crate::autolock;
 use crate::biometric;
 use crate::clipboard;
 use crate::dto::*;
 use crate::saver;
-use crate::state::{filter_shows, folders, ordered_groups, parse_entry_id, parse_filter, parse_group_id, AppState, Filter, OpenDb, Shared};
+use crate::state::{filter_shows, folders, ordered_groups, parse_entry_id, parse_filter, parse_group_id, AppState, Filter, LastSave, OpenDb, Shared};
 use crate::typing;
 
 type R<T> = Result<T, String>;
@@ -81,6 +82,7 @@ fn add_open_db(app: &AppHandle, st: &mut AppState, vault: Vault, keyfile: Option
     });
     st.active_tab = st.dbs.len() - 1;
     st.search.clear();
+    st.note_activity();
     st.settings.touch_recent(&path, keyfile.as_deref());
     if !st.picker.contains(&path) {
         st.picker.insert(0, path.clone());
@@ -110,6 +112,27 @@ fn selected_entry(st: &AppState) -> R<EntryView> {
     let db = st.active().ok_or("No database is open.")?;
     let id = db.selected_entry.ok_or("No account is selected.")?;
     db.vault.entry(id).ok_or_else(|| "That account no longer exists.".into())
+}
+
+/// The selected entry, or its history version `version` (0 = the newest earlier one).
+fn shown_entry(st: &AppState, version: Option<usize>) -> R<EntryView> {
+    let e = selected_entry(st)?;
+    let Some(index) = version else { return Ok(e) };
+    st.active()
+        .and_then(|db| db.vault.version(e.id, index))
+        .map(|(v, _)| v)
+        .ok_or_else(|| "That version no longer exists.".into())
+}
+
+/// The bytes of a file of the selected entry, or of its history version `version`.
+fn attachment_bytes(st: &AppState, version: Option<usize>, name: &str) -> R<Vec<u8>> {
+    let e = selected_entry(st)?;
+    let db = st.active().ok_or("No database is open.")?;
+    match version {
+        None => db.vault.attachment(e.id, name),
+        Some(index) => db.vault.version_attachment(e.id, index, name),
+    }
+    .ok_or_else(|| "Attachment data is missing.".into())
 }
 
 fn field_value(e: &EntryView, field: &str) -> R<String> {
@@ -178,6 +201,14 @@ pub async fn platform_info(platform: State<'_, Platform>) -> R<PlatformInfo> {
 #[tauri::command]
 pub async fn unlock_view(state: State<'_, Shared>) -> R<UnlockView> {
     Ok(state.lock().unlock_view())
+}
+
+/// Gives keyboard focus to the main window's web content. At launch WebView2 does not have
+/// it, so `focus()` on the password box marks it focused but typed keys go nowhere.
+#[tauri::command]
+pub async fn focus_window(window: tauri::WebviewWindow) -> R<()> {
+    window.set_focus().map_err(|e| e.to_string())?;
+    window.as_ref().set_focus().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -334,7 +365,12 @@ pub async fn forget_recent(app: AppHandle, state: State<'_, Shared>, path: Strin
 
 #[tauri::command]
 pub async fn choose_keyfile(app: AppHandle, state: State<'_, Shared>, path: String) -> R<UnlockView> {
-    let picked = into_path(file_dialog(&app).set_title("Choose key file").blocking_pick_file());
+    // Key files usually sit next to the database, so the dialog starts in its folder.
+    let mut dialog = file_dialog(&app).set_title("Choose key file");
+    if let Some(dir) = Path::new(&path).parent().filter(|d| d.is_dir()) {
+        dialog = dialog.set_directory(dir);
+    }
+    let picked = into_path(dialog.blocking_pick_file());
     let mut st = state.lock();
     match picked {
         Some(keyfile) => Ok(set_recent_keyfile(&app, &mut st, Path::new(&path), Some(keyfile))),
@@ -383,20 +419,45 @@ pub async fn lock_tab(state: State<'_, Shared>, index: usize, discard: bool) -> 
             return Err(format!("Could not save before locking: {e}"));
         }
     }
-    st.dbs.remove(index);
-    if st.save_error.as_ref().is_some_and(|(p, _)| *p == path) {
+    close_db(&mut st, index);
+    Ok(st.main_view())
+}
+
+/// Takes database `index` out of the open list (its changes are saved, or given up, by the
+/// caller) and forgets what belonged to it.
+pub fn close_db(st: &mut AppState, index: usize) {
+    let db = st.dbs.remove(index);
+    let path = db.vault.path();
+    if st.save_error.as_ref().is_some_and(|(p, _)| p == path) {
         st.save_error = None;
     }
     if st.active_tab > index || st.active_tab >= st.dbs.len() {
         st.active_tab = st.active_tab.saturating_sub(1);
     }
     st.search.clear();
-    st.pending_attachment = None;
+    st.draft_files.clear();
+    if st.last_save.as_ref().is_some_and(|l| l.path == path) {
+        st.last_save = None;
+    }
     if st.dbs.is_empty() {
         // No database open: remove temporary copies of opened attachments.
         clear_open_dir();
     }
-    Ok(st.main_view())
+}
+
+/// Auto-lock, after the page has saved its unsaved edits: saves and locks every open
+/// database. Returns what could not be saved (those databases are locked anyway).
+#[tauri::command]
+pub async fn lock_all(state: State<'_, Shared>) -> R<Vec<String>> {
+    Ok(autolock::lock_everything(state.inner()))
+}
+
+/// Input in one of the windows (the page reports it at most every 30 s): auto-lock counts
+/// from now.
+#[tauri::command]
+pub async fn note_activity(state: State<'_, Shared>) -> R<()> {
+    state.lock().note_activity();
+    Ok(())
 }
 
 #[tauri::command]
@@ -510,54 +571,6 @@ pub async fn empty_recycle_bin(state: State<'_, Shared>) -> R<MainView> {
     })
 }
 
-/// Step 1 of "Add file…": the native picker. Nothing is added yet; the page shows the sizes
-/// (and a warning for big files) and then calls `attach_picked` or `cancel_attachment`.
-#[tauri::command]
-pub async fn pick_attachment(app: AppHandle, state: State<'_, Shared>) -> R<Option<AttachmentPick>> {
-    let (tab, id) = {
-        let st = state.lock();
-        (st.active_tab, selected_entry(&st)?.id)
-    };
-    let Some(path) = into_path(file_dialog(&app).blocking_pick_file()) else { return Ok(None) };
-    let size = std::fs::metadata(&path).map_err(|e| format!("Could not read the file: {e}"))?.len();
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "attachment".into());
-    let mut st = state.lock();
-    let db = st.dbs.get(tab).ok_or("No database is open.")?;
-    let pick = AttachmentPick {
-        name,
-        size,
-        attachments_bytes: db.vault.attachments_total_bytes(),
-        file_bytes: std::fs::metadata(db.vault.path()).map(|m| m.len()).unwrap_or(0),
-    };
-    st.pending_attachment = Some((tab, id, path));
-    Ok(Some(pick))
-}
-
-/// Step 2: adds the picked file to the entry it was picked for, and saves.
-#[tauri::command]
-pub async fn attach_picked(state: State<'_, Shared>) -> R<MainView> {
-    let (tab, id, path) = state.lock().pending_attachment.take().ok_or("No file is waiting to be attached.")?;
-    let bytes = std::fs::read(&path).map_err(|e| format!("Could not read the file: {e}"))?;
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "attachment".into());
-    let mut st = state.lock();
-    let db = st.dbs.get_mut(tab).ok_or("That database is no longer open.")?;
-    db.vault.add_attachment(id, &name, bytes).map_err(|e| format!("Could not attach: {e}"))?;
-    st.save_tab(tab);
-    Ok(st.main_view())
-}
-
-#[tauri::command]
-pub async fn cancel_attachment(state: State<'_, Shared>) -> R<()> {
-    state.lock().pending_attachment = None;
-    Ok(())
-}
-
 /// Folder for temporary copies of attachments opened in other apps. Deleted when the last
 /// database is locked, when the app quits, and at the next start (in case it crashed).
 pub fn open_dir() -> PathBuf {
@@ -569,15 +582,10 @@ pub fn clear_open_dir() {
 }
 
 /// Opens an attachment in its usual app (PDF reader, image viewer…) from a temporary copy.
+/// `version`: a file of that history version of the entry.
 #[tauri::command]
-pub async fn open_attachment(state: State<'_, Shared>, name: String) -> R<()> {
-    let bytes = {
-        let st = state.lock();
-        let e = selected_entry(&st)?;
-        st.active()
-            .and_then(|db| db.vault.attachment(e.id, &name))
-            .ok_or("Attachment data is missing.")?
-    };
+pub async fn open_attachment(state: State<'_, Shared>, name: String, version: Option<usize>) -> R<()> {
+    let bytes = attachment_bytes(&state.lock(), version, &name)?;
     // Only the last path component: an attachment named "..\x" must not escape the folder.
     let file_name = Path::new(&name).file_name().ok_or("The attachment has no usable file name.")?;
     let dir = open_dir().join(uuid::Uuid::new_v4().simple().to_string());
@@ -604,14 +612,8 @@ pub async fn about_info() -> R<AboutInfo> {
 }
 
 #[tauri::command]
-pub async fn save_attachment(app: AppHandle, state: State<'_, Shared>, name: String) -> R<Option<String>> {
-    let bytes = {
-        let st = state.lock();
-        let e = selected_entry(&st)?;
-        st.active()
-            .and_then(|db| db.vault.attachment(e.id, &name))
-            .ok_or("Attachment data is missing.")?
-    };
+pub async fn save_attachment(app: AppHandle, state: State<'_, Shared>, name: String, version: Option<usize>) -> R<Option<String>> {
+    let bytes = attachment_bytes(&state.lock(), version, &name)?;
     let Some(target) = into_path(file_dialog(&app).set_file_name(&name).blocking_save_file()) else {
         return Ok(None);
     };
@@ -619,25 +621,20 @@ pub async fn save_attachment(app: AppHandle, state: State<'_, Shared>, name: Str
     Ok(Some(target.display().to_string()))
 }
 
+/// One field of the selected entry, or of its history version `version`.
 #[tauri::command]
-pub async fn remove_attachment(state: State<'_, Shared>, name: String) -> R<MainView> {
-    let mut st = state.lock();
-    let e = selected_entry(&st)?;
-    mutate(&mut st, "Could not remove", |db| db.vault.remove_attachment(e.id, &name))
+pub async fn reveal_field(state: State<'_, Shared>, field: String, version: Option<usize>) -> R<String> {
+    field_value(&shown_entry(&state.lock(), version)?, &field)
 }
 
+/// Copies one field of the selected entry (or of its history version `version`). Returns
+/// the seconds until the clipboard is cleared (0 = it is not).
 #[tauri::command]
-pub async fn reveal_field(state: State<'_, Shared>, field: String) -> R<String> {
-    field_value(&selected_entry(&state.lock())?, &field)
-}
-
-/// Copies one field of the selected entry. Returns the seconds until the clipboard is
-/// cleared (0 = it is not).
-#[tauri::command]
-pub async fn copy_field(state: State<'_, Shared>, field: String) -> R<u32> {
+pub async fn copy_field(state: State<'_, Shared>, field: String, version: Option<usize>) -> R<u32> {
     let (value, clear) = {
-        let st = state.lock();
-        (field_value(&selected_entry(&st)?, &field)?, st.settings.clipboard_clear_seconds)
+        let mut st = state.lock();
+        st.note_activity();
+        (field_value(&shown_entry(&st, version)?, &field)?, st.settings.clipboard_clear_seconds)
     };
     clipboard::copy(&value, clear)?;
     Ok(clear)
@@ -647,7 +644,11 @@ pub async fn copy_field(state: State<'_, Shared>, field: String) -> R<u32> {
 /// the clipboard is cleared (0 = it is not).
 #[tauri::command]
 pub async fn copy_text(state: State<'_, Shared>, text: String) -> R<u32> {
-    let clear = state.lock().settings.clipboard_clear_seconds;
+    let clear = {
+        let mut st = state.lock();
+        st.note_activity();
+        st.settings.clipboard_clear_seconds
+    };
     clipboard::copy(&text, clear)?;
     Ok(clear)
 }
@@ -704,20 +705,22 @@ pub async fn change_master_password(state: State<'_, Shared>, current: String, n
 }
 
 // ---------------------------------------------------------------------------
-// add / edit form
+// editing in the details pane
 // ---------------------------------------------------------------------------
 
+/// Starts an edit of the selected entry (`edit`) or a new one (`add`, `addDocument`): the
+/// values to edit, the folders and generator options. Clears the files picked for the last draft.
 #[tauri::command]
-pub async fn form_open(state: State<'_, Shared>, mode: String) -> R<FormData> {
+pub async fn draft_open(state: State<'_, Shared>, mode: String) -> R<Draft> {
     let mut st = state.lock();
-    st.form_files.clear();
+    st.draft_files.clear();
     let db = st.active().ok_or("No database is open.")?;
     let groups = ordered_groups(&db.vault);
     let g = &st.settings.generator;
     let gen = GenOptionsDto { length: g.length, digits: g.digits, symbols: g.symbols };
-    let form_groups = groups
+    let folders = groups
         .iter()
-        .map(|g| FormGroup {
+        .map(|g| FolderOption {
             id: g.id.to_string(),
             name: if g.depth == 0 { "No folder".to_string() } else { g.name.clone() },
             depth: g.depth,
@@ -731,7 +734,7 @@ pub async fn form_open(state: State<'_, Shared>, mode: String) -> R<FormData> {
                 Filter::Group(g) => g,
                 _ => db.vault.root(),
             };
-            EntryForm {
+            DraftEntry {
                 id: None,
                 group: group.to_string(),
                 title: String::new(),
@@ -747,11 +750,12 @@ pub async fn form_open(state: State<'_, Shared>, mode: String) -> R<FormData> {
                 autotype_windows: String::new(),
                 custom: Vec::new(),
                 document,
+                remove_files: Vec::new(),
             }
         }
         "edit" => {
             let e = selected_entry(&st)?;
-            EntryForm {
+            DraftEntry {
                 id: Some(e.id.to_string()),
                 group: e.group.to_string(),
                 title: e.title,
@@ -771,17 +775,12 @@ pub async fn form_open(state: State<'_, Shared>, mode: String) -> R<FormData> {
                     .map(|c| CustomFieldDto { key: c.key, value: c.value, protected: c.protected })
                     .collect(),
                 document: e.document,
+                remove_files: Vec::new(),
             }
         }
-        other => return Err(format!("Unknown form mode {other}.")),
+        other => return Err(format!("Unknown draft mode {other}.")),
     };
-    Ok(FormData {
-        mode: if entry.id.is_some() { "edit" } else { "add" },
-        database: (st.dbs.len() > 1).then(|| db.vault.name()),
-        groups: form_groups,
-        gen,
-        entry,
-    })
+    Ok(Draft { folders, gen, entry })
 }
 
 #[tauri::command]
@@ -807,20 +806,52 @@ pub async fn find_duplicate(state: State<'_, Shared>, title: String, url: String
         .map(|e| Duplicate { id: e.id.to_string(), title: e.title }))
 }
 
+/// Saves the draft: the edited values, files picked for it and files it removes, as one change
+/// (one history version) and one file save. `replace` marks that entry not working. With
+/// `automatic` (saved while the user was away, or by auto-lock) an entry without a name is
+/// called "Untitled" ("Untitled 2"… when taken). Remembers the save so `undo_save` can take
+/// it back.
 #[tauri::command]
-pub async fn form_save(state: State<'_, Shared>, entry: EntryForm, replace: Option<String>) -> R<MainView> {
-    let title = entry.title.trim().to_string();
-    if title.is_empty() {
-        return Err("Give the account a name first.".into());
-    }
+pub async fn draft_save(state: State<'_, Shared>, entry: DraftEntry, replace: Option<String>, automatic: bool) -> R<MainView> {
     let id = entry.id.as_deref().map(parse_entry_id).transpose()?;
     let replace = replace.as_deref().map(parse_entry_id).transpose()?;
     let group = parse_group_id(&entry.group)?;
     let mut st = state.lock();
     let db = st.active_or_err()?;
+    let mut title = entry.title.trim().to_string();
+    if title.is_empty() {
+        if !automatic {
+            return Err("Give it a name first.".into());
+        }
+        let taken: Vec<String> = db.vault.all_entries().into_iter().chain(db.vault.recycle_bin_entries()).map(|e| e.title).collect();
+        title = vault::untitled_name(&taken);
+    }
     let group = if db.vault.groups().iter().any(|g| g.id == group) { group } else { db.vault.root() };
-    let stale = id.and_then(|id| db.vault.entry(id)).is_some_and(|e| e.stale);
+    let before = match id {
+        Some(id) => Some(db.vault.entry(id).ok_or("That entry no longer exists.")?),
+        None => None,
+    };
     let sequence = entry.autotype_sequence.trim().to_string();
+    // Files picked for the draft: read them before touching the database, so a missing file
+    // stops the save with the edits still in the pane. A name the entry keeps, or another
+    // picked file has, gets a number: "scan.pdf", "scan (2).pdf".
+    let kept: Vec<&String> = before
+        .iter()
+        .flat_map(|e| e.attachments.iter())
+        .filter(|n| !entry.remove_files.contains(n))
+        .collect();
+    let mut files: Vec<(String, Vec<u8>)> = Vec::with_capacity(st.draft_files.len());
+    for path in &st.draft_files {
+        let bytes = std::fs::read(path).map_err(|e| format!("Could not read {}: {e}", path.display()))?;
+        let base = file_name(path);
+        let mut name = base.clone();
+        let mut n = 2;
+        while kept.contains(&&name) || files.iter().any(|(f, _)| *f == name) {
+            name = numbered_name(&base, n);
+            n += 1;
+        }
+        files.push((name, bytes));
+    }
     let edit = EntryEdit {
         id,
         group,
@@ -830,7 +861,7 @@ pub async fn form_save(state: State<'_, Shared>, entry: EntryForm, replace: Opti
         url: entry.url.trim().to_string(),
         notes: entry.notes,
         tags: split_tags(&entry.tags),
-        stale,
+        stale: before.as_ref().is_some_and(|e| e.stale),
         recovery_pin: entry.recovery_pin.trim().to_string(),
         recovery_phone: entry.recovery_phone.trim().to_string(),
         security_questions: entry.security_questions,
@@ -848,49 +879,189 @@ pub async fn form_save(state: State<'_, Shared>, entry: EntryForm, replace: Opti
             .filter(|l| !l.is_empty())
             .collect(),
         document: entry.document,
+        attach: files,
+        detach: entry.remove_files,
     };
-    // Files chosen in the form: read them before touching the database, so a missing file
-    // stops the save with the form still open.
-    let paths = st.form_files.clone();
-    let mut files: Vec<(String, Vec<u8>)> = Vec::with_capacity(paths.len());
-    for path in &paths {
-        let bytes = std::fs::read(path).map_err(|e| format!("Could not read {}: {e}", path.display()))?;
-        let base = file_name(path);
-        // Two picked files with the same name both stay: "scan.pdf", "scan (2).pdf".
-        let mut name = base.clone();
-        let mut n = 2;
-        while files.iter().any(|(f, _)| *f == name) {
-            name = numbered_name(&base, n);
-            n += 1;
-        }
-        files.push((name, bytes));
-    }
+    let path = st.active().map(|d| d.vault.path().to_path_buf()).ok_or("No database is open.")?;
     let db = st.active_or_err()?;
+    let replaced = replace.filter(|old| Some(*old) != id);
     let new_id = db
         .vault
         .upsert_entry(edit)
         .and_then(|new_id| {
-            if let Some(old) = replace.filter(|old| *old != new_id) {
+            if let Some(old) = replaced {
                 db.vault.set_stale(old, true)?;
-            }
-            for (name, bytes) in files {
-                db.vault.add_attachment(new_id, &name, bytes)?;
             }
             Ok(new_id)
         })
-        .map_err(|e| format!("Could not save the account: {e}"))?;
+        .map_err(|e| format!("Could not save: {e}"))?;
     db.selected_entry = Some(new_id);
-    // Keep the current list if the saved account shows in it; otherwise show its folder.
+    // Keep the current list if the saved entry shows in it; otherwise show its folder.
     let groups = ordered_groups(&db.vault);
-    if let Some(saved) = db.vault.entry(new_id) {
-        if !filter_shows(db.filter, &groups, &saved) {
-            db.filter = if saved.group == db.vault.root() { Filter::All } else { Filter::Group(saved.group) };
-        }
+    let saved = db.vault.entry(new_id).ok_or("The saved entry is missing.")?;
+    if !filter_shows(db.filter, &groups, &saved) {
+        db.filter = if saved.group == db.vault.root() { Filter::All } else { Filter::Group(saved.group) };
     }
-    st.form_files.clear();
+    st.last_save = Some(LastSave {
+        path,
+        saved,
+        created: before.is_none(),
+        replaced,
+    });
+    st.draft_files.clear();
+    st.draft_pending = false;
     st.search.clear();
     st.save_active();
     Ok(st.main_view())
+}
+
+/// Undo for the last `draft_save` or `restore_version`: an edit goes back to the entry's
+/// newest history version (the undone one stays in the history) and its folder, a new entry
+/// is deleted, and an entry it replaced is marked working again. Refused when the entry has
+/// changed since.
+#[tauri::command]
+pub async fn undo_save(state: State<'_, Shared>) -> R<MainView> {
+    let mut st = state.lock();
+    let last = st.last_save.take().ok_or("There is nothing to undo.")?;
+    let tab = st
+        .dbs
+        .iter()
+        .position(|d| d.vault.path() == last.path)
+        .ok_or("That database is no longer open.")?;
+    let db = &mut st.dbs[tab];
+    let id = last.saved.id;
+    if db.vault.entry(id).as_ref() != Some(&last.saved) {
+        return Err("It has changed since that save, so it was not undone.".into());
+    }
+    let undone = if last.created { db.vault.remove_entry(id) } else { db.vault.restore_version(id, 0, false) };
+    undone
+        .and_then(|()| match last.replaced {
+            Some(old) if db.vault.entry(old).is_some() => db.vault.set_stale(old, false),
+            _ => Ok(()),
+        })
+        .map_err(|e| format!("Could not undo: {e}"))?;
+    let shown = if last.created { last.replaced } else { Some(id) };
+    let groups = ordered_groups(&db.vault);
+    if let Some(entry) = shown.and_then(|e| db.vault.entry(e)) {
+        if !filter_shows(db.filter, &groups, &entry) {
+            db.filter = if entry.group == db.vault.root() { Filter::All } else { Filter::Group(entry.group) };
+        }
+    }
+    db.selected_entry = shown;
+    st.save_tab(tab);
+    Ok(st.main_view())
+}
+
+// ---------------------------------------------------------------------------
+// entry history
+// ---------------------------------------------------------------------------
+
+fn local_time(t: chrono::DateTime<chrono::Utc>) -> String {
+    t.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M").to_string()
+}
+
+/// The selected entry's earlier versions, newest first, with what each next save changed.
+#[tauri::command]
+pub async fn entry_history(state: State<'_, Shared>) -> R<Vec<VersionItem>> {
+    let st = state.lock();
+    let e = selected_entry(&st)?;
+    let db = st.active().ok_or("No database is open.")?;
+    Ok(db
+        .vault
+        .versions(e.id)
+        .into_iter()
+        .enumerate()
+        .map(|(index, v)| VersionItem { index, modified: local_time(v.modified), changes: v.changes })
+        .collect())
+}
+
+/// History version `index` of the selected entry, without protected values (`reveal_field`
+/// and `copy_field` with `version` get those), and the fields that differ from now.
+#[tauri::command]
+pub async fn entry_version(state: State<'_, Shared>, index: usize) -> R<VersionDetail> {
+    let st = state.lock();
+    let e = selected_entry(&st)?;
+    let db = st.active().ok_or("No database is open.")?;
+    let (v, differs) = db.vault.version(e.id, index).ok_or("That version no longer exists.")?;
+    Ok(VersionDetail {
+        index,
+        title: v.title,
+        username: v.username,
+        url: v.url,
+        notes: v.notes,
+        tags: v.tags,
+        stale: v.stale,
+        modified: local_time(v.modified),
+        has_password: !v.password.is_empty(),
+        has_recovery_pin: !v.recovery_pin.is_empty(),
+        recovery_phone: v.recovery_phone,
+        has_security_questions: !v.security_questions.trim().is_empty(),
+        custom: v
+            .custom
+            .into_iter()
+            .map(|c| CustomFieldView { value: (!c.protected).then_some(c.value), key: c.key, protected: c.protected })
+            .collect(),
+        attachments: v
+            .attachments
+            .iter()
+            .map(|name| AttachmentInfo {
+                size: db.vault.version_attachment_size(e.id, index, name).unwrap_or(0),
+                name: name.clone(),
+            })
+            .collect(),
+        document: v.document,
+        autotype_sequence: v.autotype_sequence.unwrap_or_default(),
+        autotype_windows: v.autotype_windows,
+        differs,
+    })
+}
+
+/// Makes history version `index` the current one (the current one goes into the history;
+/// the entry stays in its folder). Undo takes it back.
+#[tauri::command]
+pub async fn restore_version(state: State<'_, Shared>, index: usize) -> R<MainView> {
+    let mut st = state.lock();
+    let e = selected_entry(&st)?;
+    let path = st.active().map(|d| d.vault.path().to_path_buf()).ok_or("No database is open.")?;
+    let db = st.active_or_err()?;
+    db.vault.restore_version(e.id, index, true).map_err(|err| format!("Could not restore: {err}"))?;
+    let saved = db.vault.entry(e.id).ok_or("The restored entry is missing.")?;
+    st.last_save = Some(LastSave { path, saved, created: false, replaced: None });
+    st.save_active();
+    Ok(st.main_view())
+}
+
+/// Deletes history version `index` of the selected entry, and the files only it used.
+#[tauri::command]
+pub async fn delete_version(state: State<'_, Shared>, index: usize) -> R<MainView> {
+    let mut st = state.lock();
+    let e = selected_entry(&st)?;
+    mutate(&mut st, "Could not delete the version", |db| db.vault.delete_version(e.id, index))
+}
+
+/// Versions kept per entry in the active database (stored in the file); older ones go now.
+#[tauri::command]
+pub async fn set_history_limit(state: State<'_, Shared>, max: usize) -> R<MainView> {
+    let max = max.min(100);
+    let mut st = state.lock();
+    st.active_or_err()?.vault.set_history_max_items(max);
+    st.save_active();
+    Ok(st.main_view())
+}
+
+/// The details pane has edits that are not saved; closing the window then asks first.
+#[tauri::command]
+pub async fn set_draft_pending(state: State<'_, Shared>, pending: bool) -> R<()> {
+    state.lock().draft_pending = pending;
+    Ok(())
+}
+
+/// Quits after the page has dealt with unsaved edits (the window's close was held back for
+/// it). The exit handler saves every open database first.
+#[tauri::command]
+pub async fn quit_app(app: AppHandle) -> R<()> {
+    app.exit(0);
+    Ok(())
 }
 
 fn file_name(path: &Path) -> String {
@@ -905,11 +1076,11 @@ fn numbered_name(name: &str, n: usize) -> String {
     }
 }
 
-fn form_files_view(st: &AppState) -> FormFiles {
+fn draft_files_view(st: &AppState) -> DraftFiles {
     let db = st.active();
-    FormFiles {
+    DraftFiles {
         files: st
-            .form_files
+            .draft_files
             .iter()
             .map(|p| AttachmentInfo { name: file_name(p), size: std::fs::metadata(p).map(|m| m.len()).unwrap_or(0) })
             .collect(),
@@ -918,26 +1089,26 @@ fn form_files_view(st: &AppState) -> FormFiles {
     }
 }
 
-/// "Add files…" in the Add form: picks files to attach when the form is saved.
+/// "Add file…" while editing: picks files (several at once) to attach when the draft is saved.
 #[tauri::command]
-pub async fn form_pick_files(app: AppHandle, state: State<'_, Shared>) -> R<FormFiles> {
+pub async fn draft_pick_files(app: AppHandle, state: State<'_, Shared>) -> R<DraftFiles> {
     let picked = file_dialog(&app).blocking_pick_files().unwrap_or_default();
     let mut st = state.lock();
     for path in picked.into_iter().filter_map(|p| p.into_path().ok()) {
-        if !st.form_files.contains(&path) {
-            st.form_files.push(path);
+        if !st.draft_files.contains(&path) {
+            st.draft_files.push(path);
         }
     }
-    Ok(form_files_view(&st))
+    Ok(draft_files_view(&st))
 }
 
 #[tauri::command]
-pub async fn form_remove_file(state: State<'_, Shared>, index: usize) -> R<FormFiles> {
+pub async fn draft_remove_file(state: State<'_, Shared>, index: usize) -> R<DraftFiles> {
     let mut st = state.lock();
-    if index < st.form_files.len() {
-        st.form_files.remove(index);
+    if index < st.draft_files.len() {
+        st.draft_files.remove(index);
     }
-    Ok(form_files_view(&st))
+    Ok(draft_files_view(&st))
 }
 
 // ---------------------------------------------------------------------------
@@ -964,6 +1135,8 @@ pub async fn settings_get(state: State<'_, Shared>) -> R<SettingsView> {
         backup_dir: settings::backup_policy().dir.display().to_string(),
         quick_unlock: s.quick_unlock,
         clipboard_clear_seconds: s.clipboard_clear_seconds,
+        auto_lock_minutes: s.auto_lock_minutes,
+        lock_on_system_lock: s.lock_on_system_lock,
         quick_unlock_name: st.quick_unlock.map(|k| match k {
             biometric::Kind::WindowsHello => "Windows Hello".to_string(),
             biometric::Kind::TouchId => "Touch ID".to_string(),
@@ -993,6 +1166,8 @@ pub async fn settings_save(app: AppHandle, state: State<'_, Shared>, settings: S
         }
         s.quick_unlock = settings.quick_unlock;
         s.clipboard_clear_seconds = settings.clipboard_clear_seconds.min(3600);
+        s.auto_lock_minutes = settings.auto_lock_minutes.min(24 * 60);
+        s.lock_on_system_lock = settings.lock_on_system_lock;
         let g = settings.generator;
         s.generator = GenOptions {
             length: g.length.clamp(4, 128),
@@ -1027,7 +1202,8 @@ pub async fn open_backup_folder() -> R<()> {
 #[tauri::command]
 pub async fn autotype_selected(app: AppHandle, state: State<'_, Shared>) -> R<()> {
     let (tab, id) = {
-        let st = state.lock();
+        let mut st = state.lock();
+        st.note_activity();
         (st.active_tab, selected_entry(&st)?.id)
     };
     typing::perform_hidden(&app, "main", tab, id, false, true)
@@ -1040,6 +1216,7 @@ pub async fn autotype_selected(app: AppHandle, state: State<'_, Shared>) -> R<()
 /// Searches every open database; an empty query returns nothing (the popup keeps its matches).
 #[tauri::command]
 pub async fn quick_search(state: State<'_, Shared>, text: String) -> R<Vec<QuickItem>> {
+    state.lock().note_activity();
     let text = text.trim();
     if text.is_empty() {
         return Ok(Vec::new());
@@ -1068,7 +1245,11 @@ fn quick_entry(st: &AppState, db: usize, id: &str) -> R<EntryView> {
 /// (`password_only`: just the password and Enter, for pages that ask only for the password).
 #[tauri::command]
 pub async fn quick_type(app: AppHandle, state: State<'_, Shared>, db: usize, id: String, password_only: bool) -> R<()> {
-    let entry = quick_entry(&state.lock(), db, &id)?;
+    let entry = {
+        let mut st = state.lock();
+        st.note_activity();
+        quick_entry(&st, db, &id)?
+    };
     typing::perform_hidden(&app, "quick", db, entry.id, password_only, false)
 }
 
@@ -1076,7 +1257,8 @@ pub async fn quick_type(app: AppHandle, state: State<'_, Shared>, db: usize, id:
 #[tauri::command]
 pub async fn quick_copy(app: AppHandle, state: State<'_, Shared>, db: usize, id: String, field: String) -> R<()> {
     let (value, clear) = {
-        let st = state.lock();
+        let mut st = state.lock();
+        st.note_activity();
         (field_value(&quick_entry(&st, db, &id)?, &field)?, st.settings.clipboard_clear_seconds)
     };
     clipboard::copy(&value, clear)?;

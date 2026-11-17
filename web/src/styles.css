@@ -297,13 +297,6 @@ fluent-slider {
   --step-rate: 100% !important;
 }
 
-/* Header and footer stay put; only the form scrolls. */
-fluent-drawer-body::part(content) {
-  overflow-y: auto;
-  min-height: 0;
-  padding-top: 8px;
-}
-
 /* ---------- Main page ---------- */
 
 .main-page {
@@ -364,17 +357,6 @@ html[data-os="macos"] .sidebar-top {
   margin-top: 8px;
   border-top: 1px solid var(--colorNeutralStroke2);
   color: var(--colorBrandForeground1);
-}
-
-.form-files {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.form-files-label {
-  font-size: var(--fontSizeBase300);
-  font-weight: var(--fontWeightSemibold);
 }
 
 .nav-list {
@@ -552,9 +534,12 @@ html[data-backdrop="true"][data-os="windows"] .content {
   display: flex;
 }
 
+/* The list gives up width before the details do (down to 220px), so at the window's
+   minimum width (820px) the details keep 360px. */
 .list-pane {
   width: 308px;
-  flex-shrink: 0;
+  min-width: 220px;
+  flex-shrink: 1;
   display: flex;
   flex-direction: column;
   border-right: 1px solid var(--colorNeutralStroke2);
@@ -690,6 +675,10 @@ html[data-os="macos"] .list-toolbar {
   min-width: 0;
 }
 
+.entry-title-line fluent-badge {
+  flex-shrink: 0;
+}
+
 .entry-title {
   font-weight: var(--fontWeightSemibold);
   overflow: hidden;
@@ -724,10 +713,11 @@ html[data-os="macos"] .list-toolbar {
 
 .detail-pane {
   flex: 1;
-  min-width: 0;
+  min-width: 360px;
   display: flex;
   flex-direction: column;
   background: var(--colorNeutralBackground2);
+  container: detail / inline-size;
 }
 
 .detail-scroll {
@@ -742,15 +732,17 @@ html[data-os="macos"] .detail-scroll {
   padding-top: 28px;
 }
 
+/* Avatar, title and actions on one line; when the pane is narrow the actions wrap below. */
 .detail-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 16px;
+  gap: 12px 16px;
   margin-bottom: 24px;
 }
 
 .detail-title-block {
-  flex: 1;
+  flex: 1 1 180px;
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -763,6 +755,7 @@ html[data-os="macos"] .detail-scroll {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  max-width: 100%;
   padding: 0;
   border: none;
   background: none;
@@ -770,6 +763,13 @@ html[data-os="macos"] .detail-scroll {
   font-size: var(--fontSizeBase200);
   color: var(--colorNeutralForeground2);
   cursor: pointer;
+}
+
+.detail-folder-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .detail-folder:disabled {
@@ -784,6 +784,7 @@ html[data-os="macos"] .detail-scroll {
 .detail-folder .icon {
   width: 14px;
   height: 14px;
+  flex-shrink: 0;
 }
 
 .detail-title {
@@ -821,7 +822,8 @@ html[data-os="macos"] .detail-scroll {
   font-size: var(--fontSizeBase600);
   line-height: var(--lineHeightBase600);
   font-weight: var(--fontWeightSemibold);
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  min-width: 0;
 }
 
 .detail-badges:empty {
@@ -835,9 +837,12 @@ html[data-os="macos"] .detail-scroll {
 
 .detail-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
+  /* On a line of its own the buttons wrap instead of running past the pane. */
+  max-width: 100%;
 }
 
 /* Each field is a card on the slightly darker detail layer, like Windows 11 Settings. */
@@ -872,15 +877,17 @@ html[data-os="macos"] .detail-scroll {
   justify-content: space-between;
 }
 
+/* Value and buttons share a line; when the card is narrow the buttons wrap below. */
 .field-line {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 4px 8px;
   min-height: 32px;
 }
 
 .field-value {
-  flex: 1;
+  flex: 1 1 160px;
   min-width: 0;
   font-size: var(--fontSizeBase400);
   line-height: var(--lineHeightBase400);
@@ -893,6 +900,11 @@ html[data-os="macos"] .detail-scroll {
   line-height: var(--lineHeightBase500);
 }
 
+/* A masked value is short: its buttons stay beside it longer before wrapping. */
+.field-value:has(> .secret.masked) {
+  flex-basis: 96px;
+}
+
 .field-value.multiline {
   white-space: pre-wrap;
 }
@@ -900,12 +912,14 @@ html[data-os="macos"] .detail-scroll {
 .secret.masked {
   letter-spacing: 0.12em;
   color: var(--colorNeutralForeground2);
+  white-space: nowrap;
 }
 
 .field-actions {
   display: flex;
   gap: 4px;
   flex-shrink: 0;
+  margin-left: auto;
 }
 
 .link {
@@ -1028,16 +1042,6 @@ fluent-textarea.doc-text::part(control) {
   padding: 0 8px;
 }
 
-.storage-line {
-  padding-top: 6px;
-  border-top: 1px solid var(--colorNeutralStroke3);
-  margin-top: 4px;
-}
-
-.storage-warn {
-  color: var(--colorPaletteDarkOrangeForeground1);
-}
-
 .avatar .icon {
   width: 60%;
   height: 60%;
@@ -1092,19 +1096,28 @@ fluent-textarea.doc-text::part(control) {
   opacity: 1;
 }
 
+/* Name first; size, note and buttons wrap below it when the card is narrow. */
 .attachment-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 4px;
+  gap: 0 4px;
   min-height: 32px;
 }
 
 .attachment-name {
-  flex: 1;
+  flex: 1 1 140px;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.attachment-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+  margin-left: auto;
 }
 
 .tags {
@@ -1113,12 +1126,198 @@ fluent-textarea.doc-text::part(control) {
   gap: 4px;
 }
 
-.modified {
-  margin-top: 32px;
-  font-size: var(--fontSizeBase200);
+/* ---------- Editing in the details pane ---------- */
+
+/* "Unsaved changes · Save · Discard" above the pane while edits are pending. */
+.draft-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  flex-shrink: 0;
+  padding: 8px 32px;
+  background: var(--colorBrandBackground2);
+  border-bottom: 1px solid var(--colorBrandStroke2);
 }
 
-/* ---------- Dialogs and drawer ---------- */
+.draft-bar[hidden] {
+  display: none;
+}
+
+.draft-bar-text {
+  flex: 1;
+  font-weight: var(--fontWeightSemibold);
+  color: var(--colorBrandForeground2);
+}
+
+/* Why the edits were not saved while the user was away; on its own line in the bar. */
+.draft-bar-note {
+  flex-basis: 100%;
+  font-size: var(--fontSizeBase200);
+  color: var(--colorPaletteDarkOrangeForeground1);
+}
+
+.draft-bar-note:empty {
+  display: none;
+}
+
+/* The pencil shows on hover (and keyboard focus); double-click edits too. */
+.edit-pencil {
+  opacity: 0;
+}
+
+.field-row:hover .edit-pencil,
+.detail-title-line:hover .edit-pencil,
+.edit-pencil:focus-visible {
+  opacity: 1;
+}
+
+.field-row:focus,
+.detail-title-line:focus {
+  outline: none;
+}
+
+.field-row:focus-visible,
+.detail-title-line:focus-visible {
+  outline: 2px solid var(--colorStrokeFocus2);
+}
+
+.field-row.editing {
+  border-color: var(--colorBrandStroke1);
+}
+
+/* A field whose pending value differs from the saved one. */
+.field-row.changed {
+  box-shadow: inset 3px 0 0 var(--colorBrandStroke1), var(--shadow2);
+}
+
+.field-row.changed > .field-label::after,
+.field-row.changed > .field-label-line > .field-label::after,
+.detail-title-line.changed > .detail-title::after {
+  content: " · edited";
+  color: var(--colorBrandForeground1);
+  font-size: var(--fontSizeBase200);
+  font-weight: var(--fontWeightRegular);
+}
+
+.empty-value {
+  color: var(--colorNeutralForeground4);
+  font-style: italic;
+}
+
+.detail-title-line {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.detail-title-edit.changed .title-input {
+  border-left: 3px solid var(--colorBrandStroke1);
+}
+
+.title-input {
+  width: 100%;
+}
+
+.title-input::part(control) {
+  font-size: var(--fontSizeBase500);
+  font-weight: var(--fontWeightSemibold);
+}
+
+.add-field {
+  display: flex;
+}
+
+.attachment-note {
+  flex-shrink: 0;
+  font-size: var(--fontSizeBase200);
+  color: var(--colorBrandForeground1);
+}
+
+.attachment-row.removed .attachment-name {
+  text-decoration: line-through;
+  color: var(--colorNeutralForeground3);
+}
+
+/* ---------- Entry history ---------- */
+
+.detail-title-line.has-history .detail-title {
+  cursor: pointer;
+}
+
+.history-heading {
+  font-size: var(--fontSizeBase200);
+  color: var(--colorNeutralForeground2);
+}
+
+/* Version list beside the version; stacked when the pane is narrow. */
+.history-split {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  position: sticky;
+  top: 0;
+  max-height: calc(100vh - 160px);
+  overflow-y: auto;
+}
+
+.history-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--borderRadiusMedium);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.history-item:hover {
+  background: var(--colorSubtleBackgroundHover);
+}
+
+.history-item.selected {
+  background: var(--colorNeutralBackground1);
+  border-color: var(--colorBrandStroke1);
+  box-shadow: var(--shadow2);
+}
+
+.history-date {
+  font-weight: var(--fontWeightSemibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.history-changes {
+  font-size: var(--fontSizeBase200);
+  color: var(--colorNeutralForeground2);
+  overflow-wrap: anywhere;
+}
+
+/* A field of the version shown whose value differs from the current version. */
+.field-row.differs {
+  box-shadow: inset 3px 0 0 var(--colorPaletteMarigoldBorderActive), var(--shadow2);
+}
+
+.field-row.differs > .field-label::after,
+.field-row.differs > .field-label-line > .field-label::after {
+  content: " · differs from now";
+  color: var(--colorPaletteDarkOrangeForeground1);
+  font-size: var(--fontSizeBase200);
+  font-weight: var(--fontWeightRegular);
+}
+
+/* ---------- Dialogs ---------- */
 
 .dialog-title {
   font-size: var(--fontSizeBase500);
@@ -1249,19 +1448,12 @@ fluent-textarea.doc-text::part(control) {
   margin: 0;
 }
 
-.form-drawer {
-  --drawer-width: 600px;
-}
-
-.form-content {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  padding-bottom: 8px;
-}
-
 .dup-slot:empty {
   display: none;
+}
+
+.dup-slot {
+  margin-bottom: 8px;
 }
 
 .password-block {
@@ -1278,7 +1470,7 @@ fluent-textarea.doc-text::part(control) {
   letter-spacing: 0.02em;
 }
 
-/* The account form's password: bigger, it is read off the screen. */
+/* The password being edited: bigger, it is read off the screen. */
 .password-box.large::part(control) {
   font-size: var(--fontSizeBase500);
 }
@@ -1289,6 +1481,7 @@ fluent-textarea.doc-text::part(control) {
 
 .password-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
@@ -1314,10 +1507,12 @@ fluent-textarea.doc-text::part(control) {
 
 .length-slider {
   flex: 1;
+  min-width: 0;
 }
 
 .slider-value {
   min-width: 32px;
+  flex-shrink: 0;
   text-align: right;
   font-variant-numeric: tabular-nums;
   font-weight: var(--fontWeightSemibold);
@@ -1325,44 +1520,68 @@ fluent-textarea.doc-text::part(control) {
 
 .checkbox-line {
   display: flex;
-  gap: 24px;
-}
-
-.two-col {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-}
-
-.form-section {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding-top: 8px;
-}
-
-.custom-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 4px 24px;
 }
 
 .custom-row {
   display: grid;
-  grid-template-columns: 1fr 1.4fr auto auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto auto;
   align-items: center;
   gap: 8px;
 }
 
-.align-start {
-  align-self: flex-start;
+/* Buttons in the details keep their label on one line; rows wrap instead. */
+.detail-pane fluent-button {
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
-.drawer-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  width: 100%;
+/* A narrow details pane (window near its minimum width): less padding, and a custom field
+   puts its value on a line of its own. */
+@container detail (max-width: 480px) {
+  .history-split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .history-list {
+    position: static;
+    max-height: 220px;
+  }
+
+  .detail-scroll {
+    padding: 16px 16px 24px;
+  }
+
+  .draft-bar {
+    padding: 8px 16px;
+  }
+
+  .field-row {
+    padding: 10px 12px;
+  }
+
+  .custom-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .custom-row > :nth-child(2) {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .custom-row > :nth-child(3) {
+    grid-row: 3;
+  }
+
+  .custom-row > :nth-child(4) {
+    grid-column: 2;
+    grid-row: 1;
+  }
+}
+
+.align-start {
+  align-self: flex-start;
 }
 
 fluent-option.bin {
@@ -1490,6 +1709,31 @@ html.quick-window body {
   box-shadow: var(--shadow16);
   font-size: var(--fontSizeBase300);
   pointer-events: none;
+}
+
+/* A toast with a button (Undo after a save) takes clicks. Only while open: `display` would
+   otherwise override the closed popover's `display: none`. */
+.toast.has-action:popover-open {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding-right: 8px;
+  pointer-events: auto;
+}
+
+.toast-action {
+  padding: 4px 12px;
+  border: none;
+  border-radius: var(--borderRadiusCircular);
+  background: transparent;
+  color: var(--colorBrandForegroundInverted);
+  font: inherit;
+  font-weight: var(--fontWeightSemibold);
+  cursor: pointer;
+}
+
+.toast-action:hover {
+  background: var(--colorNeutralBackgroundInvertedHover, rgba(255, 255, 255, 0.12));
 }
 
 .fatal {

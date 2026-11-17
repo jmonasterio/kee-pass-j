@@ -12,10 +12,6 @@ import {
   DialogDefinition,
   Divider,
   DividerDefinition,
-  Drawer,
-  DrawerBody,
-  DrawerBodyDefinition,
-  DrawerDefinition,
   Dropdown,
   DropdownDefinition,
   DropdownOption,
@@ -50,8 +46,6 @@ declare global {
     "fluent-dialog": Dialog;
     "fluent-dialog-body": DialogBody;
     "fluent-divider": Divider;
-    "fluent-drawer": Drawer;
-    "fluent-drawer-body": DrawerBody;
     "fluent-dropdown": Dropdown;
     "fluent-option": DropdownOption;
     "fluent-field": Field;
@@ -76,8 +70,6 @@ export async function registerFluent(): Promise<void> {
     Dialog.define(DialogDefinition),
     DialogBody.define(DialogBodyDefinition),
     Divider.define(DividerDefinition),
-    Drawer.define(DrawerDefinition),
-    DrawerBody.define(DrawerBodyDefinition),
     Dropdown.define(DropdownDefinition),
     DropdownOption.define(DropdownOptionDefinition),
     Field.define(FieldDefinition),

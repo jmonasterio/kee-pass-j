@@ -10,8 +10,8 @@ interface ToggleDetail {
   newState?: string;
 }
 
-/** Calls `onClosed` once when a Fluent dialog/drawer reports it closed (Esc, light dismiss, hide()). */
-export function onClosed(node: HTMLElement, onClosed: () => void): void {
+/** Calls `onClosed` once when a Fluent dialog reports it closed (Esc, light dismiss, hide()). */
+function onClosed(node: HTMLElement, onClosed: () => void): void {
   const listener = (event: Event) => {
     if (event.target !== node) return;
     const detail = (event as CustomEvent<ToggleDetail>).detail;
@@ -23,9 +23,9 @@ export function onClosed(node: HTMLElement, onClosed: () => void): void {
   node.addEventListener("toggle", listener);
 }
 
-/** True while any modal dialog or drawer is on screen; page shortcuts stand down then. */
+/** True while any modal dialog is on screen; page shortcuts stand down then. */
 export function isOverlayOpen(): boolean {
-  return document.querySelector("fluent-dialog, fluent-drawer") !== null;
+  return document.querySelector("fluent-dialog") !== null;
 }
 
 export function openDialog(opts: {

@@ -10,8 +10,7 @@ const DIALOG_COMMANDS: Record<string, true> = {
   browse_open: true,
   browse_new: true,
   choose_keyfile: true,
-  pick_attachment: true,
-  form_pick_files: true,
+  draft_pick_files: true,
   save_attachment: true,
 };
 let pending = 0;
@@ -70,6 +69,8 @@ export interface TabItem {
   saving: boolean;
   /** Changes not on disk and no save running: the last save failed. */
   unsaved: boolean;
+  /** Earlier versions kept per entry (stored in the file). */
+  historyMaxItems: number;
 }
 /** A folder in the sidebar: every group except the root and the Recycle Bin subtree. */
 export interface GroupItem {
@@ -136,6 +137,11 @@ export interface EntryDetail {
   custom: CustomFieldView[];
   attachments: AttachmentInfo[];
   document: boolean;
+  /** Empty when the default sequence from Settings applies. */
+  autotypeSequence: string;
+  autotypeWindows: string[];
+  /** Earlier versions kept in the entry's history. */
+  historyCount: number;
 }
 export interface MainView {
   tabs: TabItem[];
@@ -152,7 +158,6 @@ export interface MainView {
   /** False when the database has its recycle bin turned off: every delete is permanent. */
   recycleBinEnabled: boolean;
   tileColors: TileColors;
-  storage: Storage;
 }
 
 export type FieldName =
@@ -174,13 +179,15 @@ export interface CustomField {
   value: string;
   protected: boolean;
 }
-export interface FormGroup {
+/** A folder an entry can be put in; the root reads "No folder". */
+export interface FolderOption {
   id: Id;
   name: string;
   depth: number;
   isRecycleBin: boolean;
 }
-export interface EntryForm {
+/** Every value of an entry being edited in the details pane, protected ones included. */
+export interface DraftEntry {
   id: Id | null;
   group: Id;
   title: string;
@@ -196,39 +203,26 @@ export interface EntryForm {
   autotypeWindows: string;
   custom: CustomField[];
   document: boolean;
+  /** Attachments removed when the draft is saved. */
+  removeFiles: string[];
 }
-/** "addDocument" opens the form for a new document entry. */
-export type FormMode = "add" | "addDocument" | "edit";
+/** "edit" the selected entry, or start a new account ("add") or document ("addDocument"). */
+export type DraftMode = "add" | "addDocument" | "edit";
 export interface AttachmentInfo {
   name: string;
   size: number;
-}
-/** Space the open database takes (bytes). */
-export interface Storage {
-  attachmentsBytes: number;
-  fileBytes: number;
-}
-/** A file picked for attaching, before it is added (bytes). */
-export interface AttachmentPick {
-  name: string;
-  size: number;
-  attachmentsBytes: number;
-  fileBytes: number;
 }
 export interface AboutInfo {
   version: string;
   repository: string;
 }
-export interface FormData {
-  mode: "add" | "edit";
-  /** Name of the database the entry belongs to, set when several are open. */
-  database: string | null;
-  groups: FormGroup[];
+export interface Draft {
+  folders: FolderOption[];
   gen: GenOptions;
-  entry: EntryForm;
+  entry: DraftEntry;
 }
-/** Files chosen in the Add document form, attached when it is saved (sizes in bytes). */
-export interface FormFiles {
+/** Files picked for the draft, attached when it is saved (sizes in bytes). */
+export interface DraftFiles {
   files: AttachmentInfo[];
   attachmentsBytes: number;
   fileBytes: number;
@@ -236,6 +230,35 @@ export interface FormFiles {
 export interface Duplicate {
   id: Id;
   title: string;
+}
+/** An earlier version of the selected entry; index 0 is the newest. */
+export interface VersionItem {
+  index: number;
+  modified: string;
+  /** What the next save changed: "password, website changed", "file added: scan.pdf". */
+  changes: string[];
+}
+/** One earlier version, without protected values (fetched with `revealField(field, index)`). */
+export interface VersionDetail {
+  index: number;
+  title: string;
+  username: string;
+  url: string;
+  notes: string;
+  tags: string[];
+  stale: boolean;
+  modified: string;
+  hasPassword: boolean;
+  hasRecoveryPin: boolean;
+  recoveryPhone: string;
+  hasSecurityQuestions: boolean;
+  custom: CustomFieldView[];
+  attachments: AttachmentInfo[];
+  document: boolean;
+  autotypeSequence: string;
+  autotypeWindows: string[];
+  /** Keys of the fields that differ from the current version ("password", "custom:<name>", "files", "stale"…). */
+  differs: string[];
 }
 
 export interface GeneratorSettings {
@@ -256,6 +279,10 @@ export interface SettingsView {
   quickUnlock: boolean;
   /** Seconds until a copy is cleared from the clipboard; 0 = never. */
   clipboardClearSeconds: number;
+  /** Minutes without use before every database locks; 0 = never. */
+  autoLockMinutes: number;
+  /** Lock when the computer locks or sleeps (Windows and macOS). */
+  lockOnSystemLock: boolean;
   /** "Touch ID" / "Windows Hello" when the machine has it set up; null hides the option. */
   quickUnlockName: string | null;
 }
@@ -289,6 +316,7 @@ export const api = {
   platformInfo: () => invoke<PlatformInfo>("platform_info"),
 
   unlockView: () => invoke<UnlockView>("unlock_view"),
+  focusWindow: () => invoke<void>("focus_window"),
   unlock: (path: string, password: string) => invoke<MainView>("unlock", { path, password }),
   unlockQuick: (path: string) => invoke<MainView>("unlock_quick", { path }),
   browseOpen: () => invoke<UnlockView>("browse_open"),
@@ -304,6 +332,10 @@ export const api = {
   selectTab: (index: number) => invoke<MainView>("select_tab", { index }),
   /** Saves first; with `discard`, locks even when that save fails. */
   lockTab: (index: number, discard: boolean) => invoke<MainView>("lock_tab", { index, discard }),
+  /** Auto-lock: saves and locks every database; returns what could not be saved (locked anyway). */
+  lockAll: () => invoke<string[]>("lock_all"),
+  /** Input in a window: auto-lock counts from now. */
+  noteActivity: () => invoke<void>("note_activity"),
   selectFilter: (filter: Filter) => invoke<MainView>("select_filter", { filter }),
   addGroup: (parent: Id | null, name: string) => invoke<MainView>("add_group", { parent, name }),
   renameGroup: (id: Id, name: string) => invoke<MainView>("rename_group", { id, name }),
@@ -315,30 +347,44 @@ export const api = {
   deleteEntry: () => invoke<MainView>("delete_entry"),
   deleteGroup: (id: Id) => invoke<MainView>("delete_group", { id }),
   emptyRecycleBin: () => invoke<MainView>("empty_recycle_bin"),
-  pickAttachment: () => invoke<AttachmentPick | null>("pick_attachment"),
-  attachPicked: () => invoke<MainView>("attach_picked"),
-  cancelAttachment: () => invoke<void>("cancel_attachment"),
-  openAttachment: (name: string) => invoke<void>("open_attachment", { name }),
+  /** `version`: a file of that history version of the selected entry. */
+  openAttachment: (name: string, version: number | null = null) => invoke<void>("open_attachment", { name, version }),
   setDocument: (document: boolean) => invoke<MainView>("set_document", { document }),
   aboutInfo: () => invoke<AboutInfo>("about_info"),
-  saveAttachment: (name: string) => invoke<string | null>("save_attachment", { name }),
-  removeAttachment: (name: string) => invoke<MainView>("remove_attachment", { name }),
-  revealField: (field: FieldName) => invoke<string>("reveal_field", { field }),
+  saveAttachment: (name: string, version: number | null = null) => invoke<string | null>("save_attachment", { name, version }),
+  revealField: (field: FieldName, version: number | null = null) => invoke<string>("reveal_field", { field, version }),
   /** Returns the seconds until the clipboard is cleared (0 = it is not). */
-  copyField: (field: FieldName) => invoke<number>("copy_field", { field }),
+  copyField: (field: FieldName, version: number | null = null) => invoke<number>("copy_field", { field, version }),
   /** Returns the seconds until the clipboard is cleared (0 = it is not). */
   copyText: (text: string) => invoke<number>("copy_text", { text }),
   openUrl: (url: string) => invoke<void>("open_url", { url }),
   retrySave: () => invoke<MainView>("retry_save"),
 
-  formOpen: (mode: FormMode) => invoke<FormData>("form_open", { mode }),
+  /** Values of the selected entry ("edit") or a blank one, folders and generator options.
+   *  Forgets the files picked for the previous draft. */
+  draftOpen: (mode: DraftMode) => invoke<Draft>("draft_open", { mode }),
   generate: (opts: GenOptions) => invoke<string>("generate", { opts }),
   findDuplicate: (title: string, url: string, editing: Id | null) =>
     invoke<Duplicate | null>("find_duplicate", { title, url, editing }),
-  formSave: (entry: EntryForm, replace: Id | null) => invoke<MainView>("form_save", { entry, replace }),
-  /** Native picker (several files at once); the files are attached when the form is saved. */
-  formPickFiles: () => invoke<FormFiles>("form_pick_files"),
-  formRemoveFile: (index: number) => invoke<FormFiles>("form_remove_file", { index }),
+  /** One change (one history version) with the picked and removed files, and one file save.
+   *  `automatic` (idle save, auto-lock): an entry without a name is saved as "Untitled". */
+  draftSave: (entry: DraftEntry, replace: Id | null, automatic = false) => invoke<MainView>("draft_save", { entry, replace, automatic }),
+  /** Takes back the last `draftSave` or `restoreVersion`. */
+  undoSave: () => invoke<MainView>("undo_save"),
+  /** The selected entry's earlier versions, newest first. */
+  entryHistory: () => invoke<VersionItem[]>("entry_history"),
+  entryVersion: (index: number) => invoke<VersionDetail>("entry_version", { index }),
+  /** Makes that version current (the current one goes into the history); Undo takes it back. */
+  restoreVersion: (index: number) => invoke<MainView>("restore_version", { index }),
+  deleteVersion: (index: number) => invoke<MainView>("delete_version", { index }),
+  /** Versions kept per entry in the active database; older ones are dropped now. */
+  setHistoryLimit: (max: number) => invoke<MainView>("set_history_limit", { max }),
+  /** Native picker (several files at once); the files are attached when the draft is saved. */
+  draftPickFiles: () => invoke<DraftFiles>("draft_pick_files"),
+  draftRemoveFile: (index: number) => invoke<DraftFiles>("draft_remove_file", { index }),
+  /** Tells the backend to hold back a window close while the pane has unsaved edits. */
+  setDraftPending: (pending: boolean) => invoke<void>("set_draft_pending", { pending }),
+  quitApp: () => invoke<void>("quit_app"),
 
   settingsGet: () => invoke<SettingsView>("settings_get"),
   settingsSave: (settings: SettingsView) => invoke<void>("settings_save", { settings }),
@@ -363,4 +409,19 @@ export function onSaved(handler: () => void): Promise<UnlistenFn> {
 
 export function onQuickOpen(handler: (payload: QuickOpen) => void): Promise<UnlistenFn> {
   return listen<QuickOpen>("quick-open", (event) => handler(event.payload));
+}
+
+/** Auto-lock is due (idle, or the computer locked or went to sleep): save edits, then `lockAll`. */
+export function onAutoLock(handler: () => void): Promise<UnlistenFn> {
+  return listen("auto-lock", () => handler());
+}
+
+/** The page did not answer `auto-lock` in time and the backend locked everything itself. */
+export function onAutoLocked(handler: () => void): Promise<UnlistenFn> {
+  return listen("auto-locked", () => handler());
+}
+
+/** The window was asked to close while the details pane had unsaved edits (see `setDraftPending`). */
+export function onCloseRequested(handler: () => void): Promise<UnlistenFn> {
+  return listen("close-requested", () => handler());
 }

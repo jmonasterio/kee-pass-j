@@ -191,7 +191,8 @@ fn on_hotkey(app: &AppHandle) {
     let title = autotype::active_window_title().unwrap_or_default();
     let shared = app.state::<Shared>();
     let (payload, single) = {
-        let st = shared.lock();
+        let mut st = shared.lock();
+        st.note_activity();
         let matches: Vec<(usize, EntryView)> = st
             .dbs
             .iter()

@@ -1,5 +1,6 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+mod autolock;
 mod biometric;
 mod clipboard;
 mod commands;
@@ -9,7 +10,7 @@ mod state;
 mod typing;
 
 use tauri::plugin::TauriPlugin;
-use tauri::{Manager, Runtime, WebviewWindow};
+use tauri::{Emitter, Manager, Runtime, WebviewWindow};
 
 /// The webview may only show the app's own embedded pages. Links are opened through the
 /// `open_url` command, never by navigating the webview.
@@ -105,22 +106,31 @@ fn main() {
             });
             // The hidden Quick Access window would keep the process alive after the main
             // window closes; closing the main window quits (the Exit handler saves first).
+            // With unsaved edits in the details pane the page asks Save / Discard / Stay
+            // first and then calls `quit_app`.
             let handle = app.handle().clone();
             window.on_window_event(move |event| {
-                if let tauri::WindowEvent::CloseRequested { .. } = event {
-                    handle.exit(0);
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    if handle.state::<state::Shared>().lock().draft_pending {
+                        api.prevent_close();
+                        let _ = handle.emit_to("main", "close-requested", ());
+                    } else {
+                        handle.exit(0);
+                    }
                 }
             });
             // Temporary copies of opened attachments left by a crash.
             commands::clear_open_dir();
             app.state::<state::Shared>().lock().app = Some(app.handle().clone());
             let notice = typing::init(app.handle());
+            autolock::start(app.handle());
             app.manage(commands::Platform { backdrop, notice });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             commands::platform_info,
             commands::unlock_view,
+            commands::focus_window,
             commands::unlock,
             commands::unlock_quick,
             commands::browse_open,
@@ -133,11 +143,11 @@ fn main() {
             commands::main_view,
             commands::select_tab,
             commands::lock_tab,
+            commands::lock_all,
+            commands::note_activity,
             commands::select_filter,
             commands::rename_group,
             commands::change_master_password,
-            commands::form_pick_files,
-            commands::form_remove_file,
             commands::add_group,
             commands::set_group_color,
             commands::empty_recycle_bin,
@@ -146,23 +156,29 @@ fn main() {
             commands::toggle_stale,
             commands::delete_entry,
             commands::delete_group,
-            commands::pick_attachment,
-            commands::attach_picked,
-            commands::cancel_attachment,
             commands::open_attachment,
             commands::set_document,
             commands::about_info,
             commands::save_attachment,
-            commands::remove_attachment,
             commands::reveal_field,
             commands::copy_field,
             commands::copy_text,
             commands::open_url,
             commands::retry_save,
-            commands::form_open,
+            commands::draft_open,
+            commands::draft_pick_files,
+            commands::draft_remove_file,
             commands::generate,
             commands::find_duplicate,
-            commands::form_save,
+            commands::draft_save,
+            commands::undo_save,
+            commands::entry_history,
+            commands::entry_version,
+            commands::restore_version,
+            commands::delete_version,
+            commands::set_history_limit,
+            commands::set_draft_pending,
+            commands::quit_app,
             commands::settings_get,
             commands::settings_save,
             commands::open_backup_folder,

@@ -27,6 +27,13 @@ download `OurLogins-windows-x64` (a single `.exe`) or `OurLogins-macos-universal
 `.app` for Intel and Apple silicon). The Mac app is not notarized: the first time,
 right-click it and choose Open. Pushing a `v*` tag publishes both as a GitHub release.
 
+Windows: `scripts\install-windows.ps1` copies the newest downloaded
+`OurLogins-windows-x64*.exe` (Downloads or Desktop) to
+`%LOCALAPPDATA%\Programs\Our Logins\OurLogins.exe` and points every Our Logins shortcut
+(taskbar pin, Start menu, Desktop), including ones aimed at a local `target\release` build,
+at that copy. Run it again after each download:
+`powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1`.
+
 ## Features
 
 **Everyday use**
@@ -35,9 +42,19 @@ right-click it and choose Open. Pushing a `v*` tag publishes both as a GitHub re
   be added, renamed, colored and deleted (with their contents, to the Recycle Bin); two
   folders side by side cannot have the same name (ignoring case). Letter tiles take their
   folder's color. Search is always visible (Ctrl+K).
-- "Add account" screen: site, URL, username or email, password (generator prefilled),
-  recovery PIN and phone, security questions, notes. If the site already exists it offers
-  to replace the old entry and flags that one "not working".
+- Add account (+ Add, Ctrl+N) opens a blank account in the details pane: site, URL,
+  username or email, password (generator prefilled), recovery PIN and phone, security
+  questions, notes. If the site already exists it offers to replace the old entry and flags
+  that one "not working". Nothing is written until Save.
+- Editing happens in the details pane: hover a field and click its pencil, double-click it,
+  or press F2. Changes wait under an "Unsaved changes" bar until Save (Ctrl+S) or Discard;
+  Esc puts back the field being typed in. Leaving the entry, locking or closing the window
+  asks Save / Discard / Stay. Each save keeps the previous version in the entry's history,
+  and the "Saved" message offers Undo for a few seconds.
+- History: every entry keeps its earlier versions (10 by default, set per database from its
+  ⋯ menu). "History" in the entry's ⋯ menu, or a click on its title, lists them with what
+  changed; a version shows what differs from now, and can be restored (with Undo) or
+  deleted. Files stay with the versions that had them.
 - Generator: no `0 O o 1 l I | 5 S 8 B 2 Z` by default, one length slider, digits and
   symbols checkboxes.
 - Notes render with optional monospace and copy one line at a time.
@@ -62,6 +79,9 @@ right-click it and choose Open. Pushing a `v*` tag publishes both as a GitHub re
 - Quick unlock: after one unlock with the password, Windows Hello (PIN, fingerprint or face)
   or Touch ID unlocks the database. The password is kept encrypted with a Windows Hello key,
   or in the login Keychain on macOS (see `src-tauri/src/biometric.rs` for the trade-off).
+- Auto-lock: every open database locks after a time without use (Settings: Never to 60
+  minutes, default 15), and when the computer locks or goes to sleep (Windows and macOS).
+  Unsaved edits in the details pane are saved first, and a copied password is cleared.
 - Change master password from the database's ⋯ menu (the key file stays the same).
   Password boxes have a show/hide button.
 
@@ -69,13 +89,13 @@ right-click it and choose Open. Pushing a `v*` tag publishes both as a GitHub re
 
 - Documents (+ Add → Document, Ctrl+Shift+N): an entry for IDs, passports, a will or other
   papers, with a long text in Markdown (plain line breaks are kept) and attached files.
-  Files can be chosen in the Add document form (several at once) or added later. The ⋯
-  menu turns an account into a document and back.
-- Files on any entry: add, open in the usual app, save as, remove. Sizes are shown for each
-  file and for the whole database. Adding asks first when one file is over 5 MB or all files
-  together would pass 50 MB, because every save rewrites them and each of the up to 50
-  backups copies them. Scans of a few MB each are fine; photo collections and videos belong
-  elsewhere.
+  Files picked while adding or editing (several at once) are attached when it is saved. The
+  ⋯ menu turns an account into a document and back.
+- Files on any entry: add, open in the usual app, save as, remove (adding and removing wait
+  for Save, like other edits). Sizes are shown for each file. Adding asks first when one
+  file is over 5 MB or all files together would pass 50 MB, showing the database's total
+  file sizes, because every save rewrites them and each of the up to 50 backups copies
+  them. Scans of a few MB each are fine; photo collections and videos belong elsewhere.
 - "Open" writes a temporary copy under the app data `open` folder; it is deleted when the
   last database locks, at exit and at startup.
 

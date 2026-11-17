@@ -3,6 +3,7 @@
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
 
@@ -57,6 +58,10 @@ pub struct Settings {
     /// Seconds after a copy before the clipboard is emptied (if it still holds what was
     /// copied). 0 keeps it.
     pub clipboard_clear_seconds: u32,
+    /// Minutes without any use of the app before every open database locks. 0 = never.
+    pub auto_lock_minutes: u32,
+    /// Lock every open database when the computer locks or goes to sleep (Windows, macOS).
+    pub lock_on_system_lock: bool,
 }
 
 impl Default for Settings {
@@ -71,6 +76,8 @@ impl Default for Settings {
             tile_colors: TileColors::Folder,
             quick_unlock: true,
             clipboard_clear_seconds: 20,
+            auto_lock_minutes: 15,
+            lock_on_system_lock: true,
         }
     }
 }
@@ -178,6 +185,13 @@ pub fn backup_policy() -> BackupPolicy {
     BackupPolicy { dir: data_dir().join("backups"), keep_recent: 20, keep_daily_days: 30 }
 }
 
+/// Whether auto-lock is due: `minutes` (0 = never) have passed since the app was last used.
+/// Wall-clock time, so time asleep counts; a clock set back (`now` before `last_activity`)
+/// counts as no time passed.
+pub fn auto_lock_due(last_activity: SystemTime, minutes: u32, now: SystemTime) -> bool {
+    minutes > 0 && now.duration_since(last_activity).is_ok_and(|idle| idle >= Duration::from_secs(u64::from(minutes) * 60))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -190,6 +204,8 @@ mod tests {
         assert_eq!(s.autotype_default_sequence, "{USERNAME}{TAB}{PASSWORD}{ENTER}");
         assert!(!s.notes_monospace);
         assert!(s.recent.is_empty());
+        assert_eq!(s.auto_lock_minutes, 15);
+        assert!(s.lock_on_system_lock);
     }
 
     #[test]
@@ -206,6 +222,34 @@ mod tests {
         s.reopen_last = false;
         s.save_to(&path).unwrap();
         assert_eq!(Settings::load_from(&path), s);
+    }
+
+    #[test]
+    fn settings_from_before_auto_lock_get_its_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        fs::write(&path, br#"{"reopen_last": false, "clipboard_clear_seconds": 30}"#).unwrap();
+        let s = Settings::load_from(&path);
+        assert_eq!(s.clipboard_clear_seconds, 30);
+        assert_eq!(s.auto_lock_minutes, 15);
+        assert!(s.lock_on_system_lock);
+        let s = Settings { auto_lock_minutes: 0, lock_on_system_lock: false, ..s };
+        s.save_to(&path).unwrap();
+        assert_eq!(Settings::load_from(&path), s);
+    }
+
+    #[test]
+    fn auto_lock_deadline() {
+        let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_000);
+        let mins = |m: u64| Duration::from_secs(m * 60);
+        assert!(!auto_lock_due(t0, 15, t0));
+        assert!(!auto_lock_due(t0, 15, t0 + mins(15) - Duration::from_secs(1)));
+        assert!(auto_lock_due(t0, 15, t0 + mins(15)));
+        assert!(auto_lock_due(t0, 5, t0 + mins(60)));
+        // 0 = never, however long it has been.
+        assert!(!auto_lock_due(t0, 0, t0 + mins(10_000)));
+        // A clock set back does not lock.
+        assert!(!auto_lock_due(t0, 5, t0 - mins(30)));
     }
 
     #[test]

@@ -1,6 +1,6 @@
 [package]
 name = "ourlogins-app"
-version = "0.3.2"
+version = "0.4.0"
 edition = "2021"
 rust-version = "1.89"
 description = "Our Logins desktop app (Tauri shell around the ourlogins library)"
@@ -34,6 +34,7 @@ windows-version = "0.1"
 webview2-com = "0.39"
 windows-core = "0.62"
 # Quick unlock (biometric.rs): Windows Hello key credential; SHA-256 and AES-256-GCM from BCrypt.
+# Auto-lock (autolock.rs): session-lock notifications.
 windows = { version = "0.62", features = [
     "Security_Credentials",
     "Security_Cryptography",
@@ -42,6 +43,7 @@ windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_Security_Cryptography",
     "Win32_System_LibraryLoader",
+    "Win32_System_RemoteDesktop",
     "Win32_UI_WindowsAndMessaging",
 ] }
 windows-future = "0.3"
@@ -49,9 +51,11 @@ getrandom = "0.3"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # Quick unlock (biometric.rs): login Keychain plus a Touch ID check through LAContext.
+# Auto-lock (autolock.rs): sleep and screen-lock notifications.
 security-framework = "3"
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", features = ["NSError", "NSString"] }
+objc2-foundation = { version = "0.3", features = ["NSError", "NSString", "NSNotification", "NSDistributedNotificationCenter", "NSOperation", "block2"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSWorkspace"] }
 objc2-local-authentication = { version = "0.3", features = ["LAContext", "LAError", "block2"] }
 block2 = "0.6"
 
