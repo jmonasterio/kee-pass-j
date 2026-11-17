@@ -103,6 +103,14 @@ fn main() {
                     let _ = q.hide();
                 }
             });
+            // The hidden Quick Access window would keep the process alive after the main
+            // window closes; closing the main window quits (the Exit handler saves first).
+            let handle = app.handle().clone();
+            window.on_window_event(move |event| {
+                if let tauri::WindowEvent::CloseRequested { .. } = event {
+                    handle.exit(0);
+                }
+            });
             // Temporary copies of opened attachments left by a crash.
             commands::clear_open_dir();
             app.state::<state::Shared>().lock().app = Some(app.handle().clone());
