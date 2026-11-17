@@ -386,6 +386,11 @@ impl Vault {
             db.config.version = DatabaseVersion::KDB4(1);
             db.config.inner_cipher_config = InnerCipherConfig::ChaCha20;
         }
+        // The writer also rejects KDBX 4.0 (`dump.rs` requires exactly `KDB4(1)`), so 4.0
+        // files are saved as 4.1. KeePass 2.48+ and KeePassXC 2.7+ open 4.1.
+        if matches!(db.config.version, DatabaseVersion::KDB4(minor) if minor != 1) {
+            db.config.version = DatabaseVersion::KDB4(1);
+        }
         Ok(Vault {
             path: path.to_path_buf(),
             db,
@@ -1311,6 +1316,30 @@ mod tests {
             let got: Vec<Vec<u8>> = names.iter().map(|a| v2.attachment(e.id, a).unwrap()).collect();
             assert_eq!(&got, data);
         }
+        assert!(v2.all_entries().iter().any(|e| e.title == "Added"));
+    }
+
+    /// KDBX 4.0 fixture from keepass-rs (MIT), password "demopass". keepass 0.17 reads 4.0
+    /// but only writes 4.1; saving used to fail with "Unsupported database version".
+    #[test]
+    fn kdbx40_saves_as_kdbx41() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("v40.kdbx");
+        fs::copy(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/kdbx40_argon2.kdbx"), &path).unwrap();
+        let header = |p: &Path| {
+            let mut h = [0u8; 12];
+            std::io::Read::read_exact(&mut File::open(p).unwrap(), &mut h).unwrap();
+            (u16::from_le_bytes([h[10], h[11]]), u16::from_le_bytes([h[8], h[9]]))
+        };
+        assert_eq!(header(&path), (4, 0), "fixture must be KDBX 4.0");
+
+        let mut v = Vault::open(&path, "demopass", None).unwrap();
+        let root = v.root();
+        v.upsert_entry(edit(root, "Added")).unwrap();
+        v.save(&policy(tmp.path())).unwrap();
+
+        assert_eq!(header(&path), (4, 1));
+        let v2 = Vault::open(&path, "demopass", None).unwrap();
         assert!(v2.all_entries().iter().any(|e| e.title == "Added"));
     }
 
