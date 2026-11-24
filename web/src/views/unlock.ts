@@ -12,6 +12,8 @@ export function renderUnlock(root: HTMLElement, next: UnlockView): void {
   // Keep a typed password only while this page stays on screen and refreshes for the same
   // database (e.g. after picking a key file). Once the page was left, nothing carries over.
   const keptPassword = passwordInput?.isConnected && view && !view.pendingNew ? passwordInput.value : "";
+  // Arriving at the page (app start, lock), as opposed to a re-render of the page already shown.
+  const arriving = !passwordInput?.isConnected;
   const previous = selected;
   leaveUnlock();
   view = next;
@@ -33,7 +35,7 @@ export function renderUnlock(root: HTMLElement, next: UnlockView): void {
         ),
       )
     : el("div", { class: "unlock-header" }, el("h1", { class: "app-title" }, "Our Logins"));
-  const body = next.pendingNew ? createForm(next.pendingNew) : openForm(next, selected === previous ? keptPassword : "");
+  const body = next.pendingNew ? createForm(next.pendingNew) : openForm(next, selected === previous ? keptPassword : "", arriving && !adding);
 
   setChildren(
     root,
@@ -78,7 +80,7 @@ async function refresh(call: Promise<UnlockView>): Promise<void> {
   }
 }
 
-function openForm(v: UnlockView, keptPassword: string): HTMLElement {
+function openForm(v: UnlockView, keptPassword: string, autoQuick: boolean): HTMLElement {
   const error = el("div", { class: "form-error", attrs: { role: "alert" } });
   errorNode = error;
   const password = passwordBox({ placeholder: "Master password" });
@@ -226,6 +228,18 @@ function openForm(v: UnlockView, keptPassword: string): HTMLElement {
       : el("p", { class: "muted empty-recent" }, v.openDbs.length > 0 ? "No other recent databases. Open a file or create a new one." : "No recent databases. Open a file or create a new one.");
 
   updateSelection();
+
+  // Show the Touch ID / Windows Hello prompt right away on arrival, once. A cancel or error
+  // re-renders the page without arriving, so it does not prompt again; the button stays.
+  const auto = current();
+  if (autoQuick && quickButton && auto?.quickUnlock && !auto.missing) {
+    const fire = () => {
+      if (quickButton.isConnected && selected === auto.path) void doQuickUnlock();
+    };
+    // Wait for the window to have focus so the prompt does not open behind other apps.
+    if (document.hasFocus()) setTimeout(fire, 0);
+    else window.addEventListener("focus", fire, { once: true });
+  }
 
   return el(
     "div",
