@@ -24,7 +24,6 @@ uuid = { version = "1", features = ["v4"] }
 getrandom = "0.3"
 thiserror = "2"
 global-hotkey = "0.9"
-zeroize = "1"
 
 # Keystrokes and the foreground window title (src/input.rs). Same `windows` version as the
 # app crate, so only one copy is built.
@@ -49,8 +48,6 @@ objc2-core-foundation = { version = "0.3", default-features = false, features = 
 objc2-core-graphics = { version = "0.3", default-features = false, features = ["std", "CGWindow"] }
 objc2-application-services = { version = "0.3", default-features = false, features = ["std", "HIServices", "AXUIElement", "AXError"] }
 
-[dev-dependencies]
-tempfile = "3"
 # Unoptimized crypto and gzip make debug builds unusable: Argon2 unlock takes tens of
 # seconds, and saving a 14 MB database took 4.1 s instead of 1.0 s. Optimize every
 # dependency; the workspace crates stay at opt-level 0 for fast rebuilds.

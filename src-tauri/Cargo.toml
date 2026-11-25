@@ -32,7 +32,6 @@ tauri-plugin-single-instance = "2"
 windows-version = "0.1"
 # Same versions wry uses; needed to switch off WebView2 autofill and password autosave.
 webview2-com = "0.39"
-windows-core = "0.62"
 # Quick unlock (biometric.rs): Windows Hello key credential; SHA-256 and AES-256-GCM from BCrypt.
 # Auto-lock (autolock.rs): session-lock notifications.
 windows = { version = "0.62", features = [
@@ -46,6 +45,7 @@ windows = { version = "0.62", features = [
     "Win32_System_RemoteDesktop",
     "Win32_UI_WindowsAndMessaging",
 ] }
+# IAsyncOperation; `windows` 0.62 depends on this crate but does not re-export it.
 windows-future = "0.3"
 getrandom = "0.3"
 

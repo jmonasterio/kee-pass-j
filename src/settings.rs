@@ -210,7 +210,7 @@ mod tests {
 
     #[test]
     fn round_trip_through_file() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_util::TempDir::new();
         let path = dir.path().join("nested").join("settings.json");
         let mut s = Settings { notes_monospace: true, ..Default::default() };
         s.touch_recent(Path::new("C:/db/a.kdbx"), Some(Path::new("C:/db/a.key")));
@@ -226,7 +226,7 @@ mod tests {
 
     #[test]
     fn settings_from_before_auto_lock_get_its_defaults() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_util::TempDir::new();
         let path = dir.path().join("settings.json");
         fs::write(&path, br#"{"reopen_last": false, "clipboard_clear_seconds": 30}"#).unwrap();
         let s = Settings::load_from(&path);
@@ -254,7 +254,7 @@ mod tests {
 
     #[test]
     fn missing_and_corrupt_files_give_default() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_util::TempDir::new();
         let path = dir.path().join("settings.json");
         assert_eq!(Settings::load_from(&path), Settings::default());
         fs::write(&path, b"{ not json").unwrap();
@@ -292,7 +292,7 @@ mod tests {
 
     #[test]
     fn legacy_data_dir_moves_once() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::test_util::TempDir::new();
         let old = tmp.path().join("logonpro").join("KeePassJ").join("data");
         let new = tmp.path().join("logonpro").join("OurLogins").join("data");
         fs::create_dir_all(old.join("backups").join("db-1234")).unwrap();

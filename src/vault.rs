@@ -1620,7 +1620,7 @@ mod tests {
     /// KDBX 3.1 fixture from keepass-rs (MIT), password "demopass", two entries with attachments.
     #[test]
     fn kdbx3_wrong_password_and_upgrade_on_save() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::test_util::TempDir::new();
         let path = tmp.path().join("old.kdbx");
         fs::copy(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/kdbx3_with_attachments.kdbx"), &path).unwrap();
         let pol = policy(tmp.path());
@@ -1669,7 +1669,7 @@ mod tests {
     /// but only writes 4.1; saving used to fail with "Unsupported database version".
     #[test]
     fn kdbx40_saves_as_kdbx41() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::test_util::TempDir::new();
         let path = tmp.path().join("v40.kdbx");
         fs::copy(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/kdbx40_argon2.kdbx"), &path).unwrap();
         let header = |p: &Path| {
@@ -1691,7 +1691,7 @@ mod tests {
 
     #[test]
     fn change_key_locks_out_old_password() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::test_util::TempDir::new();
         let path = tmp.path().join("k.kdbx");
         let pol = policy(tmp.path());
         let mut v = Vault::create(&path, PW).unwrap();
@@ -1708,7 +1708,7 @@ mod tests {
 
     #[test]
     fn create_save_reopen_roundtrip() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::test_util::TempDir::new();
         let path = tmp.path().join("Family Vault.kdbx");
         let pol = policy(tmp.path());
         let mut v = Vault::create(&path, PW).unwrap();
@@ -1799,7 +1799,7 @@ mod tests {
 
     #[test]
     fn update_keeps_id_and_times() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::test_util::TempDir::new();
         let path = tmp.path().join("t.kdbx");
         let mut v = Vault::create(&path, PW).unwrap();
         let root = v.root();
@@ -1846,7 +1846,7 @@ mod tests {
 
     #[test]
     fn search_and_find_by_host() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::test_util::TempDir::new();
         let path = tmp.path().join("s.kdbx");
         let mut v = Vault::create(&path, PW).unwrap();
         let root = v.root();
@@ -1878,7 +1878,7 @@ mod tests {
 
     #[test]
     fn delete_moves_to_bin_then_permanent() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::test_util::TempDir::new();
         let path = tmp.path().join("d.kdbx");
         let mut v = Vault::create(&path, PW).unwrap();
         let root = v.root();
@@ -1908,7 +1908,7 @@ mod tests {
 
     #[test]
     fn group_color_survives_save_and_bin_entries_include_deleted_groups() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::test_util::TempDir::new();
         let path = tmp.path().join("c.kdbx");
         let mut v = Vault::create(&path, PW).unwrap();
         let root = v.root();
@@ -1936,7 +1936,7 @@ mod tests {
 
     #[test]
     fn delete_group_moves_subtree_to_bin_then_permanent() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::test_util::TempDir::new();
         let mut v = Vault::create(&tmp.path().join("g.kdbx"), PW).unwrap();
         let root = v.root();
         let mail = v.add_group(root, "Mail").unwrap();
@@ -1983,7 +1983,7 @@ mod tests {
 
     #[test]
     fn document_flag_and_attachment_sizes_survive_save() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::test_util::TempDir::new();
         let path = tmp.path().join("doc.kdbx");
         let mut v = Vault::create(&path, PW).unwrap();
         let root = v.root();
@@ -2012,7 +2012,7 @@ mod tests {
 
     #[test]
     fn stale_flag_and_attachments() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::test_util::TempDir::new();
         let path = tmp.path().join("a.kdbx");
         let mut v = Vault::create(&path, PW).unwrap();
         let root = v.root();
@@ -2054,7 +2054,7 @@ mod tests {
 
     #[test]
     fn edit_with_files_is_one_history_version() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::test_util::TempDir::new();
         let path = tmp.path().join("h.kdbx");
         let mut v = Vault::create(&path, PW).unwrap();
         let root = v.root();
@@ -2086,7 +2086,7 @@ mod tests {
 
     #[test]
     fn removed_and_replaced_files_stay_in_history_until_trimmed() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::test_util::TempDir::new();
         let path = tmp.path().join("files.kdbx");
         let pol = policy(tmp.path());
         let mut v = Vault::create(&path, PW).unwrap();
@@ -2149,7 +2149,7 @@ mod tests {
 
     #[test]
     fn restore_version_undoes_the_last_edit() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::test_util::TempDir::new();
         let path = tmp.path().join("u.kdbx");
         let mut v = Vault::create(&path, PW).unwrap();
         let root = v.root();
@@ -2192,7 +2192,7 @@ mod tests {
 
     #[test]
     fn restore_and_delete_versions_by_index() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::test_util::TempDir::new();
         let path = tmp.path().join("idx.kdbx");
         let mut v = Vault::create(&path, PW).unwrap();
         let root = v.root();
@@ -2231,7 +2231,7 @@ mod tests {
 
     #[test]
     fn version_summaries_and_differences() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::test_util::TempDir::new();
         let mut v = Vault::create(&tmp.path().join("s.kdbx"), PW).unwrap();
         let root = v.root();
         let mut e = edit(root, "Bank");
@@ -2272,7 +2272,7 @@ mod tests {
 
     #[test]
     fn backup_rotation_keeps_recent_and_dailies() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::test_util::TempDir::new();
         let db_path = tmp.path().join("rot.kdbx");
         let pol = policy(tmp.path());
         let (dir, stem) = backup_subdir(&pol, &db_path).unwrap();
@@ -2319,7 +2319,7 @@ mod tests {
 
     #[test]
     fn failed_save_keeps_original() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::test_util::TempDir::new();
         let path = tmp.path().join("keep.kdbx");
         let pol = policy(tmp.path());
         let mut v = Vault::create(&path, PW).unwrap();
@@ -2347,7 +2347,7 @@ mod tests {
 
     #[test]
     fn wrong_password_and_existing_file() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::test_util::TempDir::new();
         let path = tmp.path().join("w.kdbx");
         let pol = policy(tmp.path());
         let mut v = Vault::create(&path, PW).unwrap();
@@ -2359,7 +2359,7 @@ mod tests {
 
     #[test]
     fn keyfile_roundtrip() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::test_util::TempDir::new();
         let path = tmp.path().join("k.kdbx");
         let kf = tmp.path().join("key.bin");
         fs::write(&kf, b"some random key material that is not 32 or 64 bytes long").unwrap();

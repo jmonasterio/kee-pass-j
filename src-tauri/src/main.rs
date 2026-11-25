@@ -56,7 +56,7 @@ fn apply_backdrop(window: &WebviewWindow) -> bool {
 #[cfg(windows)]
 fn harden_webview2(window: &WebviewWindow) {
     use webview2_com::Microsoft::Web::WebView2::Win32::{ICoreWebView2Settings3, ICoreWebView2Settings4};
-    use windows_core::Interface;
+    use windows::core::Interface;
     let _ = window.with_webview(|wv| unsafe {
         let Ok(core) = wv.controller().CoreWebView2() else { return };
         let Ok(settings) = core.Settings() else { return };
