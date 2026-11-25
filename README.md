@@ -17,7 +17,8 @@ KeePass 2, KeePassXC and the KeePass phone apps, so nothing is locked into this 
 - **Type logins into other apps with one hotkey** (Auto-Type and Quick Access).
 - **Keep the papers that matter next to the passwords:** IDs, passports, a will, insurance
   documents, with notes in Markdown.
-- **Small and local.** No cloud service, no account, no network access, no telemetry.
+- **Small and local.** No cloud service, no account, no telemetry. The only network use is
+  checking GitHub for a newer version.
 
 ## Download
 
@@ -33,6 +34,29 @@ Windows: `scripts\install-windows.ps1` copies the newest downloaded
 (taskbar pin, Start menu, Desktop), including ones aimed at a local `target\release` build,
 at that copy. Run it again after each download:
 `powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1`.
+
+## Updates
+
+About 5 s after it starts, the app reads `latest.json` from the newest GitHub release. If that
+release has a newer version, a toast offers "Update now", and the About dialog has
+"Check for updates". Updating saves every open database, installs the new version and restarts
+the app. Every package is signed with the updater key, and the app refuses a package whose
+signature does not match the public key in `src-tauri/tauri.conf.json`.
+
+- Windows: updates install through `OurLogins-windows-x64-setup.exe` (per user, no admin
+  prompt, into `%LOCALAPPDATA%\Our Logins`). A copy run from the single `.exe` also gets the
+  offer; the update then installs a second copy in that folder.
+- macOS: the `.app` is replaced in place from `OurLogins-macos-universal.app.tar.gz`. The app
+  must sit in a folder the user can write to (`/Applications` for an admin user).
+- Linux: only the AppImage updates itself; `.deb` installs report an error.
+
+The private key is `%USERPROFILE%\.tauri\ourlogins-updater.key` on the build machine and the
+`TAURI_SIGNING_PRIVATE_KEY` repository secret. Keep a backup: without it, installed copies
+cannot be updated again. To change the key, put the new public key in `tauri.conf.json` and
+re-sign `src-tauri/tests/fixtures/signed.txt`
+(`npx tauri signer sign -f <key> -p "" src-tauri/tests/fixtures/signed.txt`).
+
+Test an update end to end on Windows: `scripts\test-update-windows.ps1`.
 
 ## Features
 
@@ -183,7 +207,8 @@ git tag v0.3.2
 git push origin main v0.3.2
 ```
 
-The `release` job runs only when all three platform jobs pass.
+The `release` job runs only when all three platform jobs pass. It also publishes
+`latest.json` (`scripts/update-feed.mjs`), which makes installed apps offer the new version.
 
 Force a build without a new commit:
 

@@ -7,6 +7,7 @@ import { initTheme } from "./theme";
 import { toast } from "./toast";
 import { autoLock, autoLocked, closeRequested, mainKeydown, noteInput, renderMain } from "./views/main";
 import { startQuick } from "./views/quick";
+import { checkForUpdates } from "./update";
 import { leaveUnlock, renderUnlock, unlockKeydown } from "./views/unlock";
 
 type Page = "unlock" | "main";
@@ -93,6 +94,8 @@ async function start(): Promise<void> {
   // Nothing to unlock yet: go straight to the file picker.
   nav.unlock(view.recent.length === 0 && view.openDbs.length === 0 ? await api.browseOpen() : view);
   if (info.notice) toast(info.notice);
+  // Later than the startup notice, so the update offer does not replace it.
+  window.setTimeout(() => void checkForUpdates(false), 5000);
 }
 
 start().catch((err) => {

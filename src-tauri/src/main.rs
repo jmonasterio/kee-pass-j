@@ -8,6 +8,7 @@ mod dto;
 mod saver;
 mod state;
 mod typing;
+mod updater;
 
 use tauri::plugin::TauriPlugin;
 use tauri::{Emitter, Manager, Runtime, WebviewWindow};
@@ -86,6 +87,8 @@ fn main() {
         // Must be the first plugin: a second launch exits here and brings this window forward.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| typing::bring_main_to_front(app)))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(updater::Pending::default())
         .plugin(navigation_guard())
         .manage(state::Shared::new())
         .setup(|app| {
@@ -188,6 +191,8 @@ fn main() {
             commands::quick_copy,
             commands::quick_hide,
             commands::quick_open_main,
+            updater::update_check,
+            updater::update_install,
         ])
         .build(tauri::generate_context!())
         .expect("Our Logins failed to start")

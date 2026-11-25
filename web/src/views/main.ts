@@ -30,6 +30,7 @@ import { passwordBox, setSecret } from "../password-box";
 import { nav } from "../nav";
 import { copyAndTell, toast } from "../toast";
 import { openSettings } from "./settings";
+import { checkForUpdates } from "../update";
 
 type TextInputEl = HTMLElementTagNameMap["fluent-text-input"];
 type TextAreaEl = HTMLElementTagNameMap["fluent-textarea"];
@@ -2311,7 +2312,7 @@ async function openAbout(): Promise<void> {
     "Keep the family's passwords and important documents in standard KeePass files that KeePass 2, KeePassXC and phone apps still open.",
     "Never lose an edit: save on every change, with rolling backups away from the database drive.",
     "Type logins into other apps with one hotkey (Auto-Type and Quick Access).",
-    "Stay small and local: no cloud, no account, no network access.",
+    "Stay small and local: no cloud, no account. The only network use is checking GitHub for a newer version.",
   ];
   const handle = openDialog({
     title: "About Our Logins",
@@ -2341,7 +2342,13 @@ async function openAbout(): Promise<void> {
         ),
       ),
     ),
-    actions: [button("Close", () => handle.close(), { appearance: "primary" })],
+    actions: [
+      button("Check for updates", () => {
+        handle.close();
+        void checkForUpdates(true);
+      }),
+      button("Close", () => handle.close(), { appearance: "primary" }),
+    ],
   });
 }
 

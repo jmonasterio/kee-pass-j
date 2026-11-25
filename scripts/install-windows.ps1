@@ -12,9 +12,11 @@ param([string]$Exe)
 $ErrorActionPreference = 'Stop'
 
 if (-not $Exe) {
+    # Skips the -setup.exe installer: a separate download that installs and updates on its own.
     $candidates = "$env:USERPROFILE\Downloads", "$env:USERPROFILE\Desktop", "$env:USERPROFILE\OneDrive\Desktop" |
         Where-Object { Test-Path $_ } |
-        ForEach-Object { Get-ChildItem $_ -Filter 'OurLogins-windows-x64*.exe' -ErrorAction SilentlyContinue }
+        ForEach-Object { Get-ChildItem $_ -Filter 'OurLogins-windows-x64*.exe' -ErrorAction SilentlyContinue } |
+        Where-Object { $_.Name -notlike '*-setup.exe' }
     $newest = $candidates | Sort-Object LastWriteTime -Descending | Select-Object -First 1
     if (-not $newest) { throw 'No OurLogins-windows-x64*.exe in Downloads or on the Desktop. Pass -Exe <path>.' }
     $Exe = $newest.FullName

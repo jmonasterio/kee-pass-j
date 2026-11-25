@@ -5,13 +5,15 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 // Unlocking reads and decrypts the whole file: a second or more for a large file, longer on a
 // network drive. Saves run in the background (the "saved" event reports the end). A call still
 // running after 250 ms shows the busy bar. Calls that wait on a native file dialog are left
-// out, or the bar would run while the user picks a file.
+// out, or the bar would run while the user picks a file; so is the update check at startup,
+// which runs behind whatever the user is doing.
 const DIALOG_COMMANDS: Record<string, true> = {
   browse_open: true,
   browse_new: true,
   choose_keyfile: true,
   draft_pick_files: true,
   save_attachment: true,
+  update_check: true,
 };
 let pending = 0;
 let busyTimer: number | undefined;
@@ -216,6 +218,11 @@ export interface AboutInfo {
   version: string;
   repository: string;
 }
+/** A newer version on the release feed. */
+export interface UpdateInfo {
+  version: string;
+  current: string;
+}
 export interface Draft {
   folders: FolderOption[];
   gen: GenOptions;
@@ -351,6 +358,10 @@ export const api = {
   openAttachment: (name: string, version: number | null = null) => invoke<void>("open_attachment", { name, version }),
   setDocument: (document: boolean) => invoke<MainView>("set_document", { document }),
   aboutInfo: () => invoke<AboutInfo>("about_info"),
+  /** Null when this version is the newest. */
+  updateCheck: () => invoke<UpdateInfo | null>("update_check"),
+  /** Downloads, saves every open database, installs and restarts; returns only on failure. */
+  updateInstall: () => invoke<void>("update_install"),
   saveAttachment: (name: string, version: number | null = null) => invoke<string | null>("save_attachment", { name, version }),
   revealField: (field: FieldName, version: number | null = null) => invoke<string>("reveal_field", { field, version }),
   /** Returns the seconds until the clipboard is cleared (0 = it is not). */

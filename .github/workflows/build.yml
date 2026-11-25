@@ -21,7 +21,7 @@ jobs:
       - name: Dependency count does not grow
         # Raise these only on purpose, in the same commit that adds the dependency.
         run: |
-          cargo_max=536; npm_max=77
+          cargo_max=572; npm_max=77
           cargo_n=$(grep -c '^name = ' Cargo.lock)
           npm_n=$(grep -c '"node_modules/' package-lock.json)
           echo "Cargo.lock packages: $cargo_n (max $cargo_max); package-lock entries: $npm_n (max $npm_max)"
@@ -48,17 +48,24 @@ jobs:
       - name: Test
         # After the frontend: the app crate embeds web/dist at compile time.
         run: cargo test --workspace
-      - name: Bundle universal "Our Logins.app" and DMG
+      - name: Bundle universal "Our Logins.app", DMG and signed update archive
         # beforeBuildCommand (npm run build) runs inside tauri build; ad-hoc signed via bundle.macOS.signingIdentity "-".
+        # createUpdaterArtifacts adds "Our Logins.app.tar.gz" and its .sig, signed with the updater key.
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         run: npx tauri build --target universal-apple-darwin --bundles app,dmg
       - name: Stable name
         run: |
           mkdir -p dist
-          cp target/universal-apple-darwin/release/bundle/dmg/*.dmg dist/OurLogins-macos-universal.dmg
+          bundle=target/universal-apple-darwin/release/bundle
+          cp $bundle/dmg/*.dmg dist/OurLogins-macos-universal.dmg
+          cp "$bundle/macos/Our Logins.app.tar.gz" dist/OurLogins-macos-universal.app.tar.gz
+          cp "$bundle/macos/Our Logins.app.tar.gz.sig" dist/OurLogins-macos-universal.app.tar.gz.sig
       - uses: actions/upload-artifact@v4
         with:
           name: OurLogins-macos-universal
-          path: dist/OurLogins-macos-universal.dmg
+          path: dist/*
 
   windows:
     runs-on: windows-latest
@@ -79,15 +86,22 @@ jobs:
       - name: Test
         # After the frontend: the app crate embeds web/dist at compile time.
         run: cargo test --workspace
-      - name: Build single exe
+      - name: Build single exe and per-user installer
+        # The updater installs only through the NSIS installer (per user, no admin prompt); the
+        # bare exe stays for people who run it from a folder of their choice.
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         run: |
-          cargo build --release -p ourlogins-app
+          npx tauri build --bundles nsis
           mkdir dist
           copy target\release\OurLogins.exe dist\OurLogins-windows-x64.exe
+          copy target\release\bundle\nsis\*-setup.exe dist\OurLogins-windows-x64-setup.exe
+          copy target\release\bundle\nsis\*-setup.exe.sig dist\OurLogins-windows-x64-setup.exe.sig
       - uses: actions/upload-artifact@v4
         with:
           name: OurLogins-windows-x64
-          path: dist/OurLogins-windows-x64.exe
+          path: dist/*
 
   linux:
     runs-on: ubuntu-22.04
@@ -113,13 +127,17 @@ jobs:
         # After the frontend: the app crate embeds web/dist at compile time.
         run: cargo test --workspace
       - name: Bundle AppImage and .deb
-        # beforeBuildCommand (npm run build) runs inside tauri build.
+        # beforeBuildCommand (npm run build) runs inside tauri build; createUpdaterArtifacts signs the AppImage.
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         run: npx tauri build --bundles appimage,deb
       - name: Stable names
         # Fixed file names, so releases/latest/download/<name> links keep working across versions.
         run: |
           mkdir -p dist
           cp target/release/bundle/appimage/*.AppImage dist/OurLogins-linux-x86_64.AppImage
+          cp target/release/bundle/appimage/*.AppImage.sig dist/OurLogins-linux-x86_64.AppImage.sig
           cp target/release/bundle/deb/*.deb dist/OurLogins-linux-amd64.deb
       - uses: actions/upload-artifact@v4
         with:
@@ -133,14 +151,23 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: dist
+      - name: Update feed (latest.json)
+        # Read by the app's updater from releases/latest/download/latest.json (tauri.conf.json).
+        run: |
+          node scripts/update-feed.mjs "$GITHUB_REF_NAME" "$GITHUB_REPOSITORY" dist > dist/latest.json
+          cat dist/latest.json
       - uses: softprops/action-gh-release@v2
         with:
           files: |
+            dist/latest.json
             dist/OurLogins-macos-universal/OurLogins-macos-universal.dmg
+            dist/OurLogins-macos-universal/OurLogins-macos-universal.app.tar.gz
             dist/OurLogins-windows-x64/OurLogins-windows-x64.exe
+            dist/OurLogins-windows-x64/OurLogins-windows-x64-setup.exe
             dist/OurLogins-linux-x86_64/OurLogins-linux-x86_64.AppImage
             dist/OurLogins-linux-x86_64/OurLogins-linux-amd64.deb
 
