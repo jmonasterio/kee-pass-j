@@ -2933,7 +2933,7 @@ dependencies = [
 
 [[package]]
 name = "ourlogins"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "chrono",
  "directories",
@@ -2956,7 +2956,7 @@ dependencies = [
 
 [[package]]
 name = "ourlogins-app"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "arboard",
  "base64 0.22.1",
