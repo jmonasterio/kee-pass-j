@@ -23,8 +23,9 @@ $port = 47615
 if (Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue) { throw "Port $port is in use; the test feed needs it." }
 $feed = "{`"plugins`":{`"updater`":{`"endpoints`":[`"http://127.0.0.1:$port/latest.json`"],`"dangerousInsecureTransportProtocol`":true}}}"
 $serve = Join-Path $env:TEMP 'ourlogins-update-test'
-Remove-Item $serve -Recurse -ErrorAction SilentlyContinue
-New-Item -ItemType Directory $serve | Out-Null
+# Files from an earlier run; an aborted run's feed server may still hold the folder open.
+Get-ChildItem $serve -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force
+New-Item -ItemType Directory -Force $serve | Out-Null
 $nsis = 'target\release\bundle\nsis'
 
 function Build([string]$version) {
