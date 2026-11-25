@@ -71,8 +71,6 @@ export interface TabItem {
   saving: boolean;
   /** Changes not on disk and no save running: the last save failed. */
   unsaved: boolean;
-  /** Earlier versions kept per entry (stored in the file). */
-  historyMaxItems: number;
 }
 /** A folder in the sidebar: every group except the root and the Recycle Bin subtree. */
 export interface GroupItem {
@@ -388,8 +386,6 @@ export const api = {
   /** Makes that version current (the current one goes into the history); Undo takes it back. */
   restoreVersion: (index: number) => invoke<MainView>("restore_version", { index }),
   deleteVersion: (index: number) => invoke<MainView>("delete_version", { index }),
-  /** Versions kept per entry in the active database; older ones are dropped now. */
-  setHistoryLimit: (max: number) => invoke<MainView>("set_history_limit", { max }),
   /** Native picker (several files at once); the files are attached when the draft is saved. */
   draftPickFiles: () => invoke<DraftFiles>("draft_pick_files"),
   draftRemoveFile: (index: number) => invoke<DraftFiles>("draft_remove_file", { index }),

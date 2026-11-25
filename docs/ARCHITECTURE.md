@@ -89,7 +89,6 @@ impl Vault {
     pub fn version_attachment(&self, id: EntryId, index: usize, name: &str) -> Option<Vec<u8>>;
     pub fn version_attachment_size(&self, id: EntryId, index: usize, name: &str) -> Option<u64>;
     pub fn history_max_items(&self) -> usize;              // KDBX meta HistoryMaxItems, 10 when unset
-    pub fn set_history_max_items(&mut self, max: usize);   // and trims every entry now
     pub fn set_stale(&mut self, id: EntryId, stale: bool) -> Result<(), VaultError>;
     pub fn add_group(&mut self, parent: GroupId, name: &str) -> Result<GroupId, VaultError>;
     pub fn rename_group(&mut self, id: GroupId, name: &str) -> Result<(), VaultError>;
@@ -262,9 +261,8 @@ vanilla TypeScript plus Fluent UI Web Components v3 (`web/src`), bundled by esbu
   `save_attachment` take an optional `version`. `restore_version(index)` keeps the entry in
   its folder and offers Undo; `delete_version(index)` asks first. Each is one change and
   one save. A dirty draft goes through Save / Discard / Stay first.
-- Versions kept per entry are KDBX metadata (`HistoryMaxItems`), so they are set per
-  database: "Keep versions…" in the database's ⋯ menu (`set_history_limit`, active
-  database; `TabItem.historyMaxItems`). Lowering it trims every entry at once and saves.
+- Versions kept per entry are KDBX metadata (`HistoryMaxItems`, 10 when unset). The app
+  has no setting for it; KeePass or KeePassXC can change it, and the app follows the file.
 - While the pane has unsaved edits the page calls `set_draft_pending(true)`. Closing the
   main window then does not exit: the backend emits `close-requested`, the page asks
   Save / Discard / Stay and calls `quit_app`, and the Exit handler saves as before.

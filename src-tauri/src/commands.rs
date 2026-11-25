@@ -1039,16 +1039,6 @@ pub async fn delete_version(state: State<'_, Shared>, index: usize) -> R<MainVie
     mutate(&mut st, "Could not delete the version", |db| db.vault.delete_version(e.id, index))
 }
 
-/// Versions kept per entry in the active database (stored in the file); older ones go now.
-#[tauri::command]
-pub async fn set_history_limit(state: State<'_, Shared>, max: usize) -> R<MainView> {
-    let max = max.min(100);
-    let mut st = state.lock();
-    st.active_or_err()?.vault.set_history_max_items(max);
-    st.save_active();
-    Ok(st.main_view())
-}
-
 /// The details pane has edits that are not saved; closing the window then asks first.
 #[tauri::command]
 pub async fn set_draft_pending(state: State<'_, Shared>, pending: bool) -> R<()> {

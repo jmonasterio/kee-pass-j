@@ -338,59 +338,9 @@ function databaseMenu(index: number, tab: TabItem): HTMLElement {
       "fluent-menu-list",
       null,
       el("fluent-menu-item", { on: { click: () => changeMasterPassword(index, tab) } }, "Change master password…"),
-      el("fluent-menu-item", { on: { click: () => void keepVersions(index, tab) } }, `Keep versions (${tab.historyMaxItems})…`),
       el("fluent-menu-item", { on: { click: () => void lockTab(index) } }, "Lock"),
     ),
   );
-}
-
-/** How many earlier versions of each entry the database keeps: KDBX metadata, so it belongs
- *  to the file (KeePass and KeePassXC use the same number) and is set per database. */
-async function keepVersions(index: number, tab: TabItem): Promise<void> {
-  const choices = [0, 3, 5, 10, 20, 30, 50, 100];
-  if (!choices.includes(tab.historyMaxItems)) choices.push(tab.historyMaxItems);
-  const picker = el(
-    "fluent-dropdown",
-    { class: "clipboard-dropdown", attrs: { "aria-label": "Versions kept per entry" } },
-    el(
-      "fluent-listbox",
-      null,
-      choices
-        .sort((a, b) => a - b)
-        .map((n) => el("fluent-option", { attrs: { value: String(n), selected: n === tab.historyMaxItems } }, n === 0 ? "None" : plural(n, "version"))),
-    ),
-  );
-  const save = button(
-    "Save",
-    async () => {
-      const max = Number(picker.value);
-      handle.close();
-      if (max === tab.historyMaxItems) return;
-      // The command works on the active database; switch to this one first.
-      if (view?.activeTab !== index) {
-        if (!(await leaveDraft())) return;
-        await run(api.selectTab(index));
-      }
-      await run(api.setHistoryLimit(max));
-      toast(`${tab.name} keeps ${max === 0 ? "no earlier versions" : plural(max, "earlier version")} of each entry.`);
-    },
-    { appearance: "primary" },
-  );
-  const handle = openDialog({
-    title: "Keep versions",
-    class: "narrow-dialog",
-    body: el(
-      "div",
-      { class: "stack" },
-      el(
-        "p",
-        { class: "dialog-text muted" },
-        `Earlier versions kept for each entry in "${tab.name}". It is stored in the database file, so KeePass and KeePassXC keep the same number. A lower number deletes the older versions, and files only they had, right away.`,
-      ),
-      field("Versions per entry", picker),
-    ),
-    actions: [button("Cancel", () => handle.close()), save],
-  });
 }
 
 function changeMasterPassword(index: number, tab: TabItem): void {

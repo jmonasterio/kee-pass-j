@@ -1184,17 +1184,6 @@ impl Vault {
             .unwrap_or(DEFAULT_HISTORY_MAX_ITEMS)
     }
 
-    /// Sets the versions kept per entry and trims every entry's history to it; files only the
-    /// dropped versions used go.
-    pub fn set_history_max_items(&mut self, max: usize) {
-        self.db.meta.history_max_items = Some(max as isize);
-        let ids: Vec<db::EntryId> = self.db.iter_all_entries().map(|e| e.id()).collect();
-        for id in ids {
-            trim_history(&mut self.db, id, max);
-        }
-        self.dirty = true;
-    }
-
     pub fn set_stale(&mut self, id: EntryId, stale: bool) -> Result<(), VaultError> {
         let mut entry = self.db.entry_mut(id.into()).ok_or(VaultError::EntryNotFound(id))?;
         let mut tracked = entry.track_changes();
@@ -2256,7 +2245,7 @@ mod tests {
     }
 
     #[test]
-    fn removed_and_replaced_files_stay_in_history_until_trimmed() {
+    fn removed_and_replaced_files_stay_in_history() {
         let tmp = crate::test_util::TempDir::new();
         let path = tmp.path().join("files.kdbx");
         let pol = policy(tmp.path());
@@ -2296,26 +2285,14 @@ mod tests {
         e.attach = vec![("keep.txt".into(), vec![3; 10])];
         v.upsert_entry(e).unwrap();
         v.save(&pol).unwrap();
-        let with_history = fs::metadata(&path).unwrap().len();
 
-        let mut v = Vault::open(&path, PW, None).unwrap();
+        let v = Vault::open(&path, PW, None).unwrap();
         assert_eq!(v.entry(id).unwrap().attachments, vec!["keep.txt".to_string()]);
         assert_eq!(v.attachment(id, "keep.txt").unwrap(), vec![3; 10]);
         assert_eq!(v.version_attachment(id, 0, "keep.txt").unwrap(), vec![1; 10]);
         assert!(v.version_attachment(id, 0, "a.pdf").is_none());
         assert_eq!(v.version_attachment(id, 1, "a.pdf").unwrap(), scan);
         assert_eq!(v.version_attachment(other, 0, "x").unwrap(), vec![2; 5]);
-
-        // Keeping no versions drops the files only they used.
-        v.set_history_max_items(0);
-        assert_eq!(v.history_len(id), 0);
-        assert_eq!(v.attachments_total_bytes(), 10);
-        v.save(&pol).unwrap();
-        let after = fs::metadata(&path).unwrap().len();
-        assert!(after + 30_000 < with_history, "with history {with_history} bytes, trimmed {after} bytes");
-        let v = Vault::open(&path, PW, None).unwrap();
-        assert_eq!(v.history_max_items(), 0);
-        assert_eq!(v.attachment(id, "keep.txt").unwrap(), vec![3; 10]);
     }
 
     #[test]

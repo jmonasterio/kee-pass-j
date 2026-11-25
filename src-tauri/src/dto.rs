@@ -46,8 +46,6 @@ pub struct TabItem {
     pub saving: bool,
     /// Changes not on disk and no save running: the last save failed.
     pub unsaved: bool,
-    /// Earlier versions kept per entry (KDBX metadata of this file).
-    pub history_max_items: usize,
 }
 
 /// A folder in the sidebar (any group except the root and the Recycle Bin subtree).

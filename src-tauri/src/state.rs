@@ -203,7 +203,6 @@ impl AppState {
                     saving,
                     // Changes waiting with no save running: the last save failed.
                     unsaved: db.vault.is_dirty() && !saving,
-                    history_max_items: db.vault.history_max_items(),
                 }
             })
             .collect();

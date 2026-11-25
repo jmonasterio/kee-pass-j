@@ -179,7 +179,6 @@ fn main() {
             commands::entry_version,
             commands::restore_version,
             commands::delete_version,
-            commands::set_history_limit,
             commands::set_draft_pending,
             commands::quit_app,
             commands::settings_get,
