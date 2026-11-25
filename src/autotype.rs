@@ -598,6 +598,114 @@ mod tests {
     }
 
     #[test]
+    fn function_keys() {
+        let t = parse_sequence("{F1}{f12}{F5 2}").unwrap();
+        assert_eq!(t, vec![Token::Key(Key::F(1)), Token::Key(Key::F(12)), Token::Key(Key::F(5)), Token::Key(Key::F(5))]);
+        for bad in ["{F0}", "{F13}", "{F}", "{F-1}", "{FX}"] {
+            assert!(matches!(parse_sequence(bad), Err(AutotypeError::UnknownPlaceholder(_))), "{bad}");
+        }
+    }
+
+    #[test]
+    fn key_aliases_are_case_insensitive() {
+        let t = parse_sequence("{bs}{BKSP}{Backspace}{del}{Delete}{esc}{ESCAPE}{pgup}{PageUp}{PGDN}{pagedown}{ins}{Insert}")
+            .unwrap();
+        use Key::*;
+        let keys = [Backspace, Backspace, Backspace, Delete, Delete, Escape, Escape, PageUp, PageUp, PageDown, PageDown, Insert, Insert];
+        assert_eq!(t, keys.map(Token::Key).to_vec());
+        let t = parse_sequence("{space}{Home}{end}{up}{Down}{LEFT}{right}{enter}").unwrap();
+        let keys = [Space, Home, End, Up, Down, Left, Right, Enter];
+        assert_eq!(t, keys.map(Token::Key).to_vec());
+        // Extra spaces around the count are tolerated.
+        assert_eq!(parse_sequence("{TAB  2 }").unwrap(), vec![Token::Key(Tab), Token::Key(Tab)]);
+    }
+
+    #[test]
+    fn placeholder_errors() {
+        assert!(matches!(parse_sequence("{}"), Err(AutotypeError::UnknownPlaceholder(n)) if n.is_empty()));
+        // A single character that is not an escape is not a placeholder.
+        assert!(matches!(parse_sequence("{a}"), Err(AutotypeError::UnknownPlaceholder(n)) if n == "a"));
+        // A field name or CLEARFIELD does not take a count.
+        assert!(matches!(parse_sequence("{CLEARFIELD 2}"), Err(AutotypeError::UnknownPlaceholder(_))));
+        assert!(matches!(parse_sequence("{PASSWORD x}"), Err(AutotypeError::InvalidCount(_))));
+        assert!(matches!(parse_sequence("{DELAY -5}"), Err(AutotypeError::InvalidCount(_))));
+        // Error positions are character indices, so they stay right after non-ASCII text.
+        assert!(matches!(parse_sequence("é{TAB"), Err(AutotypeError::UnterminatedPlaceholder(1))));
+        assert!(matches!(parse_sequence("a{"), Err(AutotypeError::UnterminatedPlaceholder(1))));
+        assert!(matches!(parse_sequence("x+%"), Err(AutotypeError::DanglingModifier(1))));
+        // A broken placeholder after a modifier reports the placeholder error.
+        assert!(matches!(parse_sequence("^{NOPE}"), Err(AutotypeError::UnknownPlaceholder(n)) if n == "NOPE"));
+    }
+
+    #[test]
+    fn error_messages_show_braces() {
+        assert_eq!(parse_sequence("{XYZ}").unwrap_err().to_string(), "unknown placeholder {XYZ}");
+        assert_eq!(parse_sequence("{TAB 0}").unwrap_err().to_string(), "invalid count in {TAB 0}");
+    }
+
+    #[test]
+    fn tilde_and_lowercase_custom_field() {
+        assert_eq!(parse_sequence("{~}").unwrap(), vec![Token::Char('~')]);
+        // `s:` is accepted and normalised to `S:`; the field name keeps its case and spaces.
+        assert_eq!(parse_sequence("{s:My Pin }").unwrap(), vec![field("S:My Pin ")]);
+        // `{S:...}` is not split on spaces as a repeat count.
+        assert_eq!(parse_sequence("{S:TAB 3}").unwrap(), vec![field("S:TAB 3")]);
+    }
+
+    #[test]
+    fn modifier_on_repeated_placeholder_applies_once() {
+        let t = parse_sequence("+{TAB 3}").unwrap();
+        let tab = Token::Key(Key::Tab);
+        assert_eq!(t, vec![Token::Modified(m(true, false, false), Box::new(tab.clone())), tab.clone(), tab]);
+    }
+
+    #[test]
+    fn groups_nest_and_honour_escapes() {
+        let t = parse_sequence("^(+a{)})").unwrap();
+        assert_eq!(
+            t,
+            vec![
+                Token::Modified(m(false, true, false), Box::new(Token::Modified(m(true, false, false), Box::new(Token::Char('a'))))),
+                Token::Modified(m(false, true, false), Box::new(Token::Char(')'))),
+            ]
+        );
+        // A `)` outside any group is a literal character.
+        assert_eq!(parse_sequence("a)").unwrap(), vec![Token::Char('a'), Token::Char(')')]);
+        // With nested groups, one `)` closes only the inner group.
+        assert!(matches!(parse_sequence("^(%(a)"), Err(AutotypeError::UnterminatedGroup(_))));
+    }
+
+    #[test]
+    fn modifier_keys_pressed_in_fixed_order() {
+        assert!(Modifiers::default().is_empty());
+        assert!(Modifiers::default().keys().is_empty());
+        assert_eq!(m(false, true, false).keys(), vec![Modifier::Control]);
+        assert_eq!(m(true, true, true).keys(), vec![Modifier::Shift, Modifier::Control, Modifier::Alt]);
+        assert!(!m(false, false, true).is_empty());
+    }
+
+    #[test]
+    fn adapt_default_edge_cases() {
+        let seq = parse_sequence("{USERNAME}{TAB}{PASSWORD}").unwrap();
+        // An empty username never counts as "already typed", even when the field is empty too.
+        let empty = FocusedField { is_password: false, value: Some(String::new()) };
+        assert_eq!(adapt_default(&seq, Some(&empty), "  ")[..2], [Token::ClearField, field("USERNAME")]);
+        // Password focus but no `{TAB}` after the username: nothing is skipped.
+        let pw = FocusedField { is_password: true, value: None };
+        let no_tab = parse_sequence("{USERNAME}{ENTER}").unwrap();
+        assert_eq!(adapt_default(&no_tab, Some(&pw), "me"), vec![Token::ClearField, field("USERNAME"), Token::Key(Key::Enter)]);
+        // Custom fields are not cleared.
+        let custom = parse_sequence("{S:Pin}").unwrap();
+        assert_eq!(adapt_default(&custom, None, "me"), vec![field("S:Pin")]);
+    }
+
+    #[test]
+    fn password_only_matches_adapted_default() {
+        let seq = parse_sequence("{PASSWORD}{ENTER}").unwrap();
+        assert_eq!(password_only(), adapt_default(&seq, None, ""));
+    }
+
+    #[test]
     fn window_glob() {
         assert!(window_matches("*Login*", "My Bank - Login - Firefox"));
         assert!(window_matches("*login*", "My Bank - LOGIN - Firefox"));

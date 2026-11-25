@@ -5,6 +5,7 @@
   "scripts": {
     "build": "node web/build.mjs",
     "check": "tsc --noEmit -p .",
+    "test": "node --test \"web/test/*.test.mjs\"",
     "tauri": "tauri"
   },
   "dependencies": {
