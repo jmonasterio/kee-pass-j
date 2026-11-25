@@ -8,6 +8,25 @@ on:
   workflow_dispatch:
 
 jobs:
+  supply-chain:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Advisories, banned sources, duplicates (deny.toml)
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories bans sources
+      - name: npm advisories
+        run: npm audit --audit-level=low
+      - name: Dependency count does not grow
+        # Raise these only on purpose, in the same commit that adds the dependency.
+        run: |
+          cargo_max=536; npm_max=77
+          cargo_n=$(grep -c '^name = ' Cargo.lock)
+          npm_n=$(grep -c '"node_modules/' package-lock.json)
+          echo "Cargo.lock packages: $cargo_n (max $cargo_max); package-lock entries: $npm_n (max $npm_max)"
+          [ "$cargo_n" -le "$cargo_max" ] && [ "$npm_n" -le "$npm_max" ]
+
   macos:
     runs-on: macos-latest
     steps:

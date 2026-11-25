@@ -1,0 +1,20 @@
+[graph]
+all-features = false
+
+[advisories]
+# Every vulnerability fails. Unmaintained notices fail too, except those listed with a reason.
+ignore = [
+    # chrono is unmaintained. keepass 0.17 depends on it, so dropping our direct use would not
+    # remove it. Revisit when keepass moves to jiff or time.
+    { id = "RUSTSEC-2026-0543", reason = "pulled in by keepass; no replacement upstream yet" },
+]
+
+[bans]
+# Report duplicate versions without failing: all current ones come from upstream crates.
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
