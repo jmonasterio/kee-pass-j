@@ -2713,11 +2713,9 @@ dependencies = [
  "objc2-foundation",
  "serde",
  "serde_json",
- "tempfile",
  "thiserror 2.0.21",
  "uuid",
  "windows 0.62.2",
- "zeroize",
 ]
 
 [[package]]
@@ -2743,7 +2741,6 @@ dependencies = [
  "uuid",
  "webview2-com",
  "windows 0.62.2",
- "windows-core 0.62.2",
  "windows-future 0.3.2",
  "windows-version",
  "zeroize",
