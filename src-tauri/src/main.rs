@@ -142,7 +142,6 @@ fn main() {
             commands::cancel_create,
             commands::forget_recent,
             commands::choose_keyfile,
-            commands::clear_keyfile,
             commands::main_view,
             commands::select_tab,
             commands::lock_tab,

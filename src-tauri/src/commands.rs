@@ -378,12 +378,6 @@ pub async fn choose_keyfile(app: AppHandle, state: State<'_, Shared>, path: Stri
     }
 }
 
-#[tauri::command]
-pub async fn clear_keyfile(app: AppHandle, state: State<'_, Shared>, path: String) -> R<UnlockView> {
-    let mut st = state.lock();
-    Ok(set_recent_keyfile(&app, &mut st, Path::new(&path), None))
-}
-
 // ---------------------------------------------------------------------------
 // main page
 // ---------------------------------------------------------------------------

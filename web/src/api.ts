@@ -331,7 +331,6 @@ export const api = {
   cancelCreate: () => invoke<UnlockView>("cancel_create"),
   forgetRecent: (path: string) => invoke<UnlockView>("forget_recent", { path }),
   chooseKeyfile: (path: string) => invoke<UnlockView>("choose_keyfile", { path }),
-  clearKeyfile: (path: string) => invoke<UnlockView>("clear_keyfile", { path }),
 
   mainView: () => invoke<MainView>("main_view"),
   selectTab: (index: number) => invoke<MainView>("select_tab", { index }),

@@ -151,19 +151,7 @@ function openForm(v: UnlockView, keptPassword: string, autoQuick: boolean): HTML
         ),
         el("div", { class: "recent-path" }, item.path),
         item.keyfile
-          ? el(
-              "div",
-              { class: "recent-keyfile" },
-              el("span", null, "Key file: ", el("span", { class: "keyfile-name" }, item.keyfile)),
-              button(
-                "Clear",
-                (event) => {
-                  event.stopPropagation();
-                  void refresh(api.clearKeyfile(item.path));
-                },
-                { appearance: "transparent", size: "small" },
-              ),
-            )
+          ? el("div", { class: "recent-keyfile" }, "Key file: ", el("span", { class: "keyfile-name" }, item.keyfile))
           : null,
       ),
       button(
