@@ -95,46 +95,63 @@ fn resolve_from(map: &HashMap<String, String>, name: &str) -> Option<String> {
 }
 
 struct TypingJob {
+    entry: EntryView,
+    /// Typed unless a window association with a sequence of its own matches the window in
+    /// front when typing starts.
     tokens: Vec<autotype::Token>,
-    fields: HashMap<String, String>,
-    /// The username, when the entry types the default sequence: that sequence is then
-    /// adapted to the focused field (see `autotype::adapt_default`).
-    adapt_for: Option<String>,
+    /// `tokens` is the app's default sequence: it is adapted to the focused field (see
+    /// `autotype::adapt_default`).
+    adapt: bool,
+    /// "Type password": `tokens` only, never an association's sequence.
+    password_only: bool,
 }
 
-/// What to type for the entry: its own sequence, the default one, or (`password_only`) just
-/// the password and Enter.
+fn parse(seq: &str) -> Result<Vec<autotype::Token>, String> {
+    autotype::parse_sequence(seq).map_err(|err| format!("Auto-Type sequence not understood: {err}"))
+}
+
+/// What to type for the entry, as KeePass resolves it: its own sequence, else its folder's
+/// inherited default, else the app's default; or (`password_only`) just the password and
+/// Enter. A window association's sequence is chosen when typing starts (`run_typing`), once
+/// the target window is in front. Fails when KeePass's Auto-Type switch is off for the entry
+/// or one of its folders.
 fn typing_job(app: &AppHandle, db_index: usize, id: EntryId, password_only: bool) -> Result<TypingJob, String> {
     let st = app.state::<Shared>();
     let st = st.lock();
     let db = st.dbs.get(db_index).ok_or("That database is no longer open.")?;
-    let e = db.vault.entry(id).ok_or("That account no longer exists.")?;
-    let own = e.autotype_sequence.as_deref().filter(|s| !s.trim().is_empty());
-    let (tokens, adapt_for) = if password_only {
-        (autotype::password_only(), None)
+    let entry = db.vault.entry(id).ok_or("That account no longer exists.")?;
+    if !entry.autotype_enabled {
+        return Err("Auto-Type is turned off for this account or its folder in the database.".into());
+    }
+    let (tokens, adapt) = if password_only {
+        (autotype::password_only(), false)
     } else {
-        let seq = own.unwrap_or(&st.settings.autotype_default_sequence);
-        let tokens = autotype::parse_sequence(seq).map_err(|err| format!("Auto-Type sequence not understood: {err}"))?;
-        (tokens, own.is_none().then(|| e.username.clone()))
+        let own = entry.autotype_sequence_for(None);
+        (parse(own.unwrap_or(&st.settings.autotype_default_sequence))?, own.is_none())
     };
-    Ok(TypingJob {
-        tokens,
-        fields: field_map(&e),
-        adapt_for,
-    })
+    Ok(TypingJob { entry, tokens, adapt, password_only })
 }
 
 fn run_typing(job: &TypingJob) -> Result<(), String> {
-    let fields = &job.fields;
+    let e = &job.entry;
+    let from_window = if job.password_only {
+        None
+    } else {
+        autotype::active_window_title()
+            .and_then(|title| e.autotype_window_sequence(&title).map(parse))
+            .transpose()?
+    };
     let adapted;
-    let tokens = match &job.adapt_for {
-        Some(username) => {
-            adapted = autotype::adapt_default(&job.tokens, autotype::focused_field().as_ref(), username);
+    let tokens = match &from_window {
+        Some(tokens) => tokens,
+        None if job.adapt => {
+            adapted = autotype::adapt_default(&job.tokens, autotype::focused_field().as_ref(), &e.username);
             &adapted
         }
         None => &job.tokens,
     };
-    autotype::perform(tokens, &|name| resolve_from(fields, name)).map_err(|e| format!("Auto-Type failed: {e}"))
+    let fields = field_map(e);
+    autotype::perform(tokens, &|name| resolve_from(&fields, name)).map_err(|e| format!("Auto-Type failed: {e}"))
 }
 
 /// Hides the window `label` so the window behind it regains focus, waits 250 ms, types on the
@@ -203,7 +220,8 @@ fn on_hotkey(app: &AppHandle) {
                     .into_iter()
                     .filter(|e| {
                         !title.is_empty()
-                            && (e.autotype_windows.iter().any(|p| autotype::window_matches(p, &title))
+                            && e.autotype_enabled
+                            && (e.autotype_windows.iter().any(|w| autotype::window_matches(&w.window, &title))
                                 || autotype::title_matches(&e.title, &title)
                                 || autotype::url_host_matches(&e.url, &title))
                     })

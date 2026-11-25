@@ -154,7 +154,7 @@ export async function openSettings(): Promise<void> {
       row(
         "text",
         "Default typing sequence",
-        "What Auto-Type types when an account has no sequence of its own. The field is cleared before {USERNAME} and {PASSWORD}, so you don't need {CLEARFIELD}.",
+        "What Auto-Type types when an account has no sequence of its own and its folder has no default sequence (set in KeePass). The field is cleared before {USERNAME} and {PASSWORD}, so you don't need {CLEARFIELD}. A ~ presses Enter; {~} types a tilde.",
         sequence,
       ),
     ),

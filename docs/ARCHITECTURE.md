@@ -29,10 +29,14 @@ pub struct EntryView {
     pub security_questions: String,                // custom field "Security Questions" (protected, multiline)
     pub custom: Vec<CustomField>,                  // every other non-standard string field
     pub attachments: Vec<String>,                  // attachment names
-    pub autotype_sequence: Option<String>,         // None = use default sequence
-    pub autotype_windows: Vec<String>,             // window-title patterns
+    pub autotype_sequence: Option<String>,         // entry's own; None = folder or app default
+    pub autotype_windows: Vec<AutoTypeWindow>,     // associations: { window pattern, sequence ("" = entry's) }
+    pub autotype_group_sequence: Option<String>,   // nearest non-blank group DefaultAutoTypeSequence
+    pub autotype_enabled: bool,                    // entry Enabled && nearest group EnableAutoType != false
     pub modified: chrono::DateTime<chrono::Utc>,
 }
+// EntryView::autotype_window_sequence(title): first matching association's non-blank sequence.
+// EntryView::autotype_sequence_for(Some(title)): that, else entry's, else group's; None = app default.
 pub struct CustomField { pub key: String, pub value: String, pub protected: bool }
 
 /// Everything the UI can change. `id: None` creates; `Some` updates in place.
@@ -171,9 +175,9 @@ pub enum Key { Tab, Enter, Space, Backspace, Delete, Escape, Home, End, Up, Down
 pub struct Modifiers { pub shift: bool, pub ctrl: bool, pub alt: bool }
 /// KeePass 2.x grammar: `{USERNAME}` `{PASSWORD}` `{URL}` `{TITLE}` `{NOTES}` `{S:Field Name}`, `{CLEARFIELD}`,
 /// `{TAB}` `{ENTER}` `{SPACE}` `{BACKSPACE}` `{DELETE}` `{ESC}` `{HOME}` `{END}` `{UP}` `{DOWN}` `{LEFT}` `{RIGHT}` `{F1}`..`{F12}`,
-/// `{TAB 3}` repeat counts, `{DELAY 500}`, `{{}` `{}}` `{+}` `{^}` `{%}` escapes,
+/// `{TAB 3}` repeat counts, `{DELAY 500}`, `{{}` `{}}` `{+}` `{^}` `{%}` `{~}` escapes, bare `~` = Enter,
 /// `+` `^` `%` prefix = shift/ctrl/alt applied to the next key or `(group)`.
-/// Plain characters type literally.
+/// Other plain characters type literally.
 pub fn parse_sequence(seq: &str) -> Result<Vec<Token>, AutotypeError>;
 /// Types the sequence. `resolve` maps field names (upper-case standard names or `S:` custom names) to values.
 /// Releases modifiers still held from the hotkey first; fails with `WindowChanged` if the foreground window changes.
@@ -222,7 +226,11 @@ vanilla TypeScript plus Fluent UI Web Components v3 (`web/src`), bundled by esbu
   window is typed at once; otherwise the hotkey opens Quick Access, a second always-on-top
   window (`quick` in `tauri.conf.json`, same bundle loaded with `?quick`, `web/src/views/quick.ts`).
   Typing from Quick Access or the main window hides that window, waits 250 ms so the app
-  behind gets the focus back, then types.
+  behind gets the focus back, then types. Entries with Auto-Type switched off (entry or
+  inherited group flag) are not matched and refuse to type. The sequence is resolved when
+  typing starts, against the window then in front: matching association's sequence, else
+  entry, else group default, else the Settings default (only that one is adapted to the
+  focused field).
 - `src-tauri/src/biometric.rs`: quick unlock. Windows: the password is encrypted with a key
   derived from a Windows Hello signature (KeePassXC's scheme). macOS: login Keychain item read
   only after a Touch ID check (the module doc explains why the Keychain itself cannot require

@@ -60,8 +60,10 @@ at that copy. Run it again after each download:
 - Notes render with optional monospace and copy one line at a time.
 - Auto-Type with KeePass 2.x semantics: a global hotkey matches the current window's title
   (by entry title, URL host or window pattern), or type the selected entry. Default sequence
-  `{USERNAME}{TAB}{PASSWORD}{ENTER}`, per-entry override, KeePass placeholder grammar
-  including `{CLEARFIELD}`. The default sequence looks at the focused field first (Windows
+  `{USERNAME}{TAB}{PASSWORD}{ENTER}`, overridden as in KeePass by a matching window
+  association's sequence, the entry's sequence, or its folder's default sequence; KeePass's
+  Auto-Type on/off switches on entries and folders are respected. KeePass placeholder grammar
+  including `{CLEARFIELD}` and `~` for Enter. The default sequence looks at the focused field first (Windows
   UI Automation, macOS Accessibility): it replaces text already in a field, skips a username
   that is already filled in, and types only the password into a password box. Like KeePass,
   it lets go of the hotkey's modifier keys before typing and stops if another window comes

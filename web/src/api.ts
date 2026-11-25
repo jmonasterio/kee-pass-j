@@ -137,7 +137,7 @@ export interface EntryDetail {
   custom: CustomFieldView[];
   attachments: AttachmentInfo[];
   document: boolean;
-  /** Empty when the default sequence from Settings applies. */
+  /** Empty when the folder's default sequence (set in KeePass) or else the one from Settings applies. */
   autotypeSequence: string;
   autotypeWindows: string[];
   /** Earlier versions kept in the entry's history. */

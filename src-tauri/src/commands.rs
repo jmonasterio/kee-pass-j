@@ -768,7 +768,7 @@ pub async fn draft_open(state: State<'_, Shared>, mode: String) -> R<Draft> {
                 notes: e.notes,
                 tags: e.tags.join(", "),
                 autotype_sequence: e.autotype_sequence.unwrap_or_default(),
-                autotype_windows: e.autotype_windows.join("\n"),
+                autotype_windows: e.autotype_windows.iter().map(|w| w.window.as_str()).collect::<Vec<_>>().join("\n"),
                 custom: e
                     .custom
                     .into_iter()
@@ -1011,7 +1011,7 @@ pub async fn entry_version(state: State<'_, Shared>, index: usize) -> R<VersionD
             .collect(),
         document: v.document,
         autotype_sequence: v.autotype_sequence.unwrap_or_default(),
-        autotype_windows: v.autotype_windows,
+        autotype_windows: v.autotype_windows.into_iter().map(|w| w.window).collect(),
         differs,
     })
 }

@@ -1549,7 +1549,7 @@ function displayRow(key: string): HTMLElement {
     case "group":
       return valueCard(k, "Folder", draft?.folders.find((f) => f.id === text)?.name ?? "", []);
     case "autotypeSequence":
-      return valueCard(k, labelOf(k), text || emptyValue("Default from Settings"), [], "mono");
+      return valueCard(k, labelOf(k), text || emptyValue("Folder or Settings default"), [], "mono");
     case "autotypeWindows":
       return valueCard(k, labelOf(k), text || emptyValue("Any window"), [], "mono multiline");
     default:
@@ -2192,7 +2192,7 @@ function versionRows(d: VersionDetail): HTMLElement[] {
     );
   }
   if (shownIf("autotypeSequence", d.autotypeSequence !== "")) {
-    rows.push(versionCard("Auto-Type sequence", d.autotypeSequence || emptyValue("Default from Settings"), [], differs("autotypeSequence"), "mono"));
+    rows.push(versionCard("Auto-Type sequence", d.autotypeSequence || emptyValue("Folder or Settings default"), [], differs("autotypeSequence"), "mono"));
   }
   if (shownIf("autotypeWindows", d.autotypeWindows.length > 0)) {
     rows.push(versionCard("Auto-Type window titles", d.autotypeWindows.join("\n") || emptyValue("Any window"), [], differs("autotypeWindows"), "mono multiline"));

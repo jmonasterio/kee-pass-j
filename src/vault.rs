@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Local, NaiveDate, NaiveDateTime, TimeZone, Utc};
 use keepass::config::{DatabaseConfig, DatabaseVersion, InnerCipherConfig, KdfConfig, VariantDictionary};
-use keepass::db::{self, fields, AutoTypeAssociation, Database, Entry, History, Times, Value};
+use keepass::db::{self, fields, AutoType, AutoTypeAssociation, Database, Entry, History, Times, Value};
 use keepass::DatabaseKey;
 
 pub const FIELD_STALE: &str = "KPJ_Stale";
@@ -182,14 +182,53 @@ pub struct EntryView {
     pub custom: Vec<CustomField>,
     /// Attachment names.
     pub attachments: Vec<String>,
-    /// `None` means the default sequence applies.
+    /// The entry's own default sequence. `None` when it has none: the folder default
+    /// (`autotype_group_sequence`) or else the app's default applies.
     pub autotype_sequence: Option<String>,
-    /// Window-title patterns.
-    pub autotype_windows: Vec<String>,
+    /// Window associations, in file order.
+    pub autotype_windows: Vec<AutoTypeWindow>,
+    /// KeePass group `DefaultAutoTypeSequence` inherited by the entry: the nearest non-empty
+    /// one from its folder up to the root.
+    pub autotype_group_sequence: Option<String>,
+    /// KeePass's effective Auto-Type switch: the entry's own `Enabled` flag, and the nearest
+    /// folder up the tree that sets `EnableAutoType` does not set it to false.
+    pub autotype_enabled: bool,
     /// A "document" entry (entry custom data `OurLogins.Kind = document`): text and files,
     /// no login. Other KeePass apps show it as a normal entry.
     pub document: bool,
     pub modified: DateTime<Utc>,
+}
+
+/// A KeePass Auto-Type window association.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AutoTypeWindow {
+    /// Window-title pattern (see `autotype::window_matches`).
+    pub window: String,
+    /// Sequence typed into a matching window; empty means the entry's default sequence.
+    pub sequence: String,
+}
+
+impl EntryView {
+    /// The sequence of the first window association whose pattern matches `window_title`,
+    /// when that sequence is non-blank. KeePass types it instead of the entry's default.
+    pub fn autotype_window_sequence(&self, window_title: &str) -> Option<&str> {
+        self.autotype_windows
+            .iter()
+            .find(|w| crate::autotype::window_matches(&w.window, window_title))
+            .map(|w| w.sequence.as_str())
+            .filter(|s| !s.trim().is_empty())
+    }
+
+    /// The sequence KeePass types for this entry into the window titled `window_title`
+    /// (`None`: no window known): the matching association's own sequence, otherwise the
+    /// entry's own sequence, otherwise the inherited folder default. `None` means the app's
+    /// default sequence applies.
+    pub fn autotype_sequence_for(&self, window_title: Option<&str>) -> Option<&str> {
+        window_title
+            .and_then(|title| self.autotype_window_sequence(title))
+            .or(self.autotype_sequence.as_deref())
+            .or(self.autotype_group_sequence.as_deref())
+    }
 }
 
 /// Everything the UI can change. `id: None` creates; `Some` updates in place.
@@ -314,13 +353,18 @@ fn entry_view_in(e: &db::EntryRef<'_>, group: GroupId) -> EntryView {
     custom.sort_by(|a, b| a.key.cmp(&b.key));
     let mut attachments: Vec<String> = e.attachments_named().map(|(n, _)| n.to_owned()).collect();
     attachments.sort();
-    let (autotype_sequence, autotype_windows) = match &e.autotype {
+    let (autotype_sequence, autotype_windows, entry_enabled) = match &e.autotype {
         Some(at) => (
-            at.default_sequence.clone().filter(|s| !s.is_empty()),
-            at.associations.iter().map(|a| a.window.clone()).collect(),
+            non_blank(at.default_sequence.as_deref()),
+            at.associations
+                .iter()
+                .map(|a| AutoTypeWindow { window: a.window.clone(), sequence: a.sequence.clone() })
+                .collect(),
+            at.enabled,
         ),
-        None => (None, Vec::new()),
+        None => (None, Vec::new(), true),
     };
+    let (autotype_group_sequence, group_enabled) = group_autotype(e.database(), group.into());
     EntryView {
         id: e.id().into(),
         group,
@@ -338,9 +382,39 @@ fn entry_view_in(e: &db::EntryRef<'_>, group: GroupId) -> EntryView {
         attachments,
         autotype_sequence,
         autotype_windows,
+        autotype_group_sequence,
+        autotype_enabled: entry_enabled && group_enabled,
         document: e.get(FIELD_KIND) == Some(KIND_DOCUMENT),
         modified: to_utc(e.times.last_modification),
     }
+}
+
+fn non_blank(s: Option<&str>) -> Option<String> {
+    s.filter(|s| !s.trim().is_empty()).map(str::to_owned)
+}
+
+/// KeePass's inherited group Auto-Type settings, walking from `group` up to the root: the
+/// nearest non-blank `DefaultAutoTypeSequence`, and the nearest explicit `EnableAutoType`
+/// (unset all the way up means enabled). A group that no longer exists (a history version's
+/// old folder) contributes nothing.
+fn group_autotype(db: &Database, group: db::GroupId) -> (Option<String>, bool) {
+    let mut sequence = None;
+    let mut enabled = None;
+    let mut current = Some(group);
+    while let Some(id) = current {
+        let Some(g) = db.group(id) else { break };
+        if sequence.is_none() {
+            sequence = non_blank(g.default_autotype_sequence.as_deref());
+        }
+        if enabled.is_none() {
+            enabled = g.enable_autotype;
+        }
+        if sequence.is_some() && enabled.is_some() {
+            break;
+        }
+        current = g.parent().map(|p| p.id());
+    }
+    (sequence, enabled.unwrap_or(true))
 }
 
 /// Stale entries last, then title A-Z (case-insensitive), then id for a stable order.
@@ -906,8 +980,9 @@ impl Vault {
 
             e.tags = edit.tags.iter().filter(|t| !t.is_empty()).cloned().collect();
 
-            let mut at = e.autotype.take().unwrap_or_default();
-            at.enabled = true;
+            // An entry without Auto-Type settings gets KeePass's defaults (enabled); an existing
+            // `Enabled = False` from KeePass stays as it is.
+            let mut at = e.autotype.take().unwrap_or_else(|| AutoType { enabled: true, ..AutoType::default() });
             at.default_sequence = edit.autotype_sequence.clone().filter(|s| !s.is_empty());
             let previous: HashMap<String, String> = at
                 .associations
@@ -1606,7 +1681,7 @@ mod tests {
             security_questions: e.security_questions,
             custom: e.custom,
             autotype_sequence: e.autotype_sequence,
-            autotype_windows: e.autotype_windows,
+            autotype_windows: e.autotype_windows.into_iter().map(|w| w.window).collect(),
             document: e.document,
             attach: Vec::new(),
             detach: Vec::new(),
@@ -1773,7 +1848,9 @@ mod tests {
         assert_eq!(b.attachments, vec!["card.txt".to_string()]);
         assert_eq!(r.attachment(bank, "card.txt").unwrap(), b"front: 1234");
         assert_eq!(b.autotype_sequence.as_deref(), Some("{USERNAME}{ENTER}{DELAY 500}{PASSWORD}{ENTER}"));
-        assert_eq!(b.autotype_windows, vec!["*MyBank*".to_string(), "//Bank.*//".to_string()]);
+        let windows: Vec<&str> = b.autotype_windows.iter().map(|w| w.window.as_str()).collect();
+        assert_eq!(windows, vec!["*MyBank*", "//Bank.*//"]);
+        assert!(b.autotype_enabled);
         assert!(b.modified > Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap());
 
         let a = r.entry(amazon_old).unwrap();
@@ -1842,6 +1919,100 @@ mod tests {
         v.add_group(sub, "Other").unwrap();
         v.rename_group(sub, "RENAMED").unwrap();
         assert!(matches!(v.upsert_entry(edit(GroupId(uuid::Uuid::new_v4()), "x")), Err(VaultError::GroupNotFound(_))));
+    }
+
+    /// KeePass order: a matching association's own sequence, then the entry's sequence, then
+    /// the nearest non-blank folder default up the tree, then the app default (`None`).
+    #[test]
+    fn autotype_sequence_resolution() {
+        let tmp = crate::test_util::TempDir::new();
+        let path = tmp.path().join("at.kdbx");
+        let pol = policy(tmp.path());
+        let mut v = Vault::create(&path, PW).unwrap();
+        let root = v.root();
+        let outer = v.add_group(root, "Outer").unwrap();
+        let inner = v.add_group(outer, "Inner").unwrap();
+        v.db.group_mut(outer.into()).unwrap().default_autotype_sequence = Some("{USERNAME}~{PASSWORD}~".into());
+        // A blank folder default in between does not stop the inheritance.
+        v.db.group_mut(inner.into()).unwrap().default_autotype_sequence = Some(" ".into());
+
+        let mut bank = edit(inner, "Bank");
+        bank.autotype_windows = vec!["*Bank Login*".into(), "Bank Home*".into()];
+        let bank = v.upsert_entry(bank).unwrap();
+        // The editor sets only window patterns; KeePass also sets a sequence per window.
+        v.db.entry_mut(bank.into()).unwrap().autotype.as_mut().unwrap().associations[0].sequence =
+            "{PASSWORD}{ENTER}".into();
+        let plain = v.upsert_entry(edit(root, "Plain")).unwrap();
+        v.save(&pol).unwrap();
+
+        let mut r = Vault::open(&path, PW, None).unwrap();
+        let b = r.entry(bank).unwrap();
+        assert_eq!(b.autotype_sequence, None);
+        assert_eq!(b.autotype_group_sequence.as_deref(), Some("{USERNAME}~{PASSWORD}~"));
+        assert_eq!(b.autotype_window_sequence("My Bank Login - Browser"), Some("{PASSWORD}{ENTER}"));
+        assert_eq!(b.autotype_sequence_for(Some("My Bank Login - Browser")), Some("{PASSWORD}{ENTER}"));
+        // A matching association with an empty sequence falls back to the entry's default,
+        // here inherited from Outer through Inner.
+        assert_eq!(b.autotype_window_sequence("Bank Home"), None);
+        assert_eq!(b.autotype_sequence_for(Some("Bank Home")), Some("{USERNAME}~{PASSWORD}~"));
+        assert_eq!(b.autotype_sequence_for(Some("Elsewhere")), Some("{USERNAME}~{PASSWORD}~"));
+        assert_eq!(b.autotype_sequence_for(None), Some("{USERNAME}~{PASSWORD}~"));
+        // Nothing set anywhere: the app default.
+        let p = r.entry(plain).unwrap();
+        assert_eq!(p.autotype_group_sequence, None);
+        assert_eq!(p.autotype_sequence_for(Some("Plain")), None);
+
+        // The entry's own sequence overrides the folder default but not the association's.
+        // Editing keeps the association's sequence.
+        let mut e = edit_of(&r, bank);
+        e.autotype_sequence = Some("{TITLE}{ENTER}".into());
+        r.upsert_entry(e).unwrap();
+        let b = r.entry(bank).unwrap();
+        assert_eq!(b.autotype_sequence_for(Some("Elsewhere")), Some("{TITLE}{ENTER}"));
+        assert_eq!(b.autotype_sequence_for(Some("Bank Home")), Some("{TITLE}{ENTER}"));
+        assert_eq!(b.autotype_sequence_for(Some("My Bank Login - Browser")), Some("{PASSWORD}{ENTER}"));
+
+        // The nearest non-blank folder default wins.
+        r.db.group_mut(inner.into()).unwrap().default_autotype_sequence = Some("{TAB}".into());
+        let mut e = edit_of(&r, bank);
+        e.autotype_sequence = None;
+        r.upsert_entry(e).unwrap();
+        assert_eq!(r.entry(bank).unwrap().autotype_sequence_for(Some("Elsewhere")), Some("{TAB}"));
+    }
+
+    /// KeePass's switches: the entry's `Enabled`, and the nearest folder that sets
+    /// `EnableAutoType`. Editing an entry keeps its switch.
+    #[test]
+    fn autotype_enabled_flags() {
+        let tmp = crate::test_util::TempDir::new();
+        let path = tmp.path().join("en.kdbx");
+        let pol = policy(tmp.path());
+        let mut v = Vault::create(&path, PW).unwrap();
+        let root = v.root();
+        let off = v.add_group(root, "Off").unwrap();
+        let below = v.add_group(off, "Below").unwrap();
+        v.db.group_mut(off.into()).unwrap().enable_autotype = Some(false);
+        let a = v.upsert_entry(edit(off, "A")).unwrap();
+        let b = v.upsert_entry(edit(below, "B")).unwrap();
+        let c = v.upsert_entry(edit(root, "C")).unwrap();
+        assert!(!v.entry(a).unwrap().autotype_enabled);
+        assert!(!v.entry(b).unwrap().autotype_enabled, "inherited from Off");
+        assert!(v.entry(c).unwrap().autotype_enabled);
+        v.db.group_mut(below.into()).unwrap().enable_autotype = Some(true);
+        assert!(v.entry(b).unwrap().autotype_enabled, "Below turns it back on");
+
+        v.db.entry_mut(c.into()).unwrap().autotype.as_mut().unwrap().enabled = false;
+        let mut e = edit_of(&v, c);
+        e.title = "C renamed".into();
+        v.upsert_entry(e).unwrap();
+        v.save(&pol).unwrap();
+
+        let r = Vault::open(&path, PW, None).unwrap();
+        assert!(!r.entry(a).unwrap().autotype_enabled);
+        assert!(r.entry(b).unwrap().autotype_enabled);
+        let c = r.entry(c).unwrap();
+        assert_eq!(c.title, "C renamed");
+        assert!(!c.autotype_enabled, "editing must not turn Auto-Type back on");
     }
 
     #[test]

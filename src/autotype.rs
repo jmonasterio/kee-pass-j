@@ -106,9 +106,9 @@ pub enum Token {
 /// Placeholders: `{USERNAME}` `{PASSWORD}` `{URL}` `{TITLE}` `{NOTES}` `{S:Field Name}`, `{CLEARFIELD}`,
 /// `{TAB}` `{ENTER}` `{SPACE}` `{BACKSPACE}` `{DELETE}` `{ESC}` `{HOME}` `{END}` `{UP}` `{DOWN}`
 /// `{LEFT}` `{RIGHT}` `{F1}`..`{F12}`, `{TAB 3}` repeat counts, `{DELAY 500}`,
-/// `{{}` `{}}` `{+}` `{^}` `{%}` `{(}` `{)}` escapes.
+/// `{{}` `{}}` `{+}` `{^}` `{%}` `{(}` `{)}` `{~}` escapes.
 /// `+` `^` `%` prefixes apply shift/ctrl/alt to the next key or to a `(group)`.
-/// Plain characters type literally.
+/// A bare `~` presses Enter, as `{ENTER}`. Every other plain character types literally.
 pub fn parse_sequence(seq: &str) -> Result<Vec<Token>, AutotypeError> {
     let chars: Vec<char> = seq.chars().collect();
     let mut pos = 0;
@@ -175,7 +175,7 @@ fn parse_single(chars: &[char], pos: &mut usize) -> Result<Vec<Token>, AutotypeE
     let c = chars[*pos];
     if c != '{' {
         *pos += 1;
-        return Ok(vec![Token::Char(c)]);
+        return Ok(vec![if c == '~' { Token::Key(Key::Enter) } else { Token::Char(c) }]);
     }
     let start = *pos;
     // `{{}` and `{}}` escapes: the body is a single brace followed by `}`.
@@ -646,6 +646,16 @@ mod tests {
     #[test]
     fn tilde_and_lowercase_custom_field() {
         assert_eq!(parse_sequence("{~}").unwrap(), vec![Token::Char('~')]);
+        // A bare `~` is Enter, as in KeePass; it takes modifiers like any key.
+        assert_eq!(
+            parse_sequence("{USERNAME}~a{~}").unwrap(),
+            vec![field("USERNAME"), Token::Key(Key::Enter), Token::Char('a'), Token::Char('~')]
+        );
+        assert_eq!(parse_sequence("~").unwrap(), parse_sequence("{ENTER}").unwrap());
+        assert_eq!(
+            parse_sequence("^~").unwrap(),
+            vec![Token::Modified(m(false, true, false), Box::new(Token::Key(Key::Enter)))]
+        );
         // `s:` is accepted and normalised to `S:`; the field name keeps its case and spaces.
         assert_eq!(parse_sequence("{s:My Pin }").unwrap(), vec![field("S:My Pin ")]);
         // `{S:...}` is not split on spaces as a repeat count.

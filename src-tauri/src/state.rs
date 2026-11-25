@@ -443,7 +443,7 @@ fn entry_detail(vault: &Vault, e: &EntryView, groups: &[GroupView], folders: &[G
             .collect(),
         document: e.document,
         autotype_sequence: e.autotype_sequence.clone().unwrap_or_default(),
-        autotype_windows: e.autotype_windows.clone(),
+        autotype_windows: e.autotype_windows.iter().map(|w| w.window.clone()).collect(),
         history_count: vault.history_len(e.id),
     }
 }
