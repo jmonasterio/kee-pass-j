@@ -35,6 +35,8 @@ pub struct UnlockView {
     pub pending_new: Option<String>,
     /// "Touch ID" / "Windows Hello" when quick unlock is available and turned on.
     pub quick_unlock_label: Option<&'static str>,
+    /// This app's version, shown next to the title.
+    pub version: &'static str,
 }
 
 #[derive(Serialize)]

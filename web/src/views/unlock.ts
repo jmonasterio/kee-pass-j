@@ -34,7 +34,7 @@ export function renderUnlock(root: HTMLElement, next: UnlockView): void {
           el("div", { class: "muted" }, `${next.openDbs.join(", ")} stay${next.openDbs.length === 1 ? "s" : ""} open. This one opens in a new tab.`),
         ),
       )
-    : el("div", { class: "unlock-header" }, el("h1", { class: "app-title" }, "Our Logins"));
+    : el("div", { class: "unlock-header" }, el("h1", { class: "app-title" }, "Our Logins", el("span", { class: "app-version" }, next.version)));
   const body = next.pendingNew ? createForm(next.pendingNew) : openForm(next, selected === previous ? keptPassword : "", arriving && !adding);
 
   setChildren(

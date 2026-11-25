@@ -184,6 +184,13 @@ fluent-menu-item.danger-item {
   font-weight: var(--fontWeightSemibold);
 }
 
+.app-version {
+  margin-left: 8px;
+  font-size: var(--fontSizeBase300);
+  font-weight: var(--fontWeightRegular);
+  color: var(--colorNeutralForeground3);
+}
+
 .recent-list {
   display: flex;
   flex-direction: column;

@@ -62,6 +62,8 @@ export interface UnlockView {
   pendingNew: string | null;
   /** "Touch ID" / "Windows Hello" when quick unlock is available and turned on. */
   quickUnlockLabel: string | null;
+  /** This app's version, shown next to the title. */
+  version: string;
 }
 
 export interface TabItem {

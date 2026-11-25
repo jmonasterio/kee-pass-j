@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Our Logins: download</title>
+<meta name="description" content="Our Logins: a KeePass-compatible (KDBX) password manager for Windows, macOS and Linux.">
+<style>
+  :root { color-scheme: light dark; --fg: #1b1b1b; --muted: #5f6368; --bg: #fafafa; --card: #fff; --line: #e0e0e0; --accent: #0f6cbd; }
+  @media (prefers-color-scheme: dark) { :root { --fg: #f0f0f0; --muted: #a8a8a8; --bg: #1c1c1c; --card: #262626; --line: #3a3a3a; --accent: #4ea3f1; } }
+  body { margin: 0; font: 16px/1.5 "Segoe UI", system-ui, -apple-system, sans-serif; color: var(--fg); background: var(--bg); }
+  main { max-width: 720px; margin: 0 auto; padding: 48px 20px; }
+  h1 { margin: 0 0 4px; font-size: 32px; }
+  .lead { margin: 0 0 32px; color: var(--muted); }
+  .version { margin: -24px 0 32px; color: var(--muted); font-size: 14px; }
+  .version a { color: inherit; }
+  .os { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 16px 20px; margin-bottom: 12px; }
+  .os.mine { border-color: var(--accent); border-width: 2px; }
+  .os h2 { margin: 0 0 8px; font-size: 18px; display: flex; align-items: center; gap: 10px; }
+  /* Monochrome OS logos tinted with the text color (light and dark themes). */
+  .os-icon { width: 24px; height: 24px; flex: none; background: var(--fg); -webkit-mask: var(--icon) center / contain no-repeat; mask: var(--icon) center / contain no-repeat; }
+  #windows .os-icon { --icon: url(windows.svg); }
+  #mac .os-icon { --icon: url(apple.svg); }
+  #linux .os-icon { --icon: url(linux.svg); }
+  .os .mine-tag { display: none; font-size: 13px; font-weight: 600; color: var(--accent); }
+  .os.mine .mine-tag { display: inline; }
+  .dl { display: inline-block; margin: 4px 8px 4px 0; padding: 8px 14px; border-radius: 6px; background: var(--accent); color: #fff; text-decoration: none; font-weight: 600; }
+  .note { margin: 8px 0 0; font-size: 14px; color: var(--muted); }
+  code { font-size: 13px; }
+  footer { margin-top: 32px; font-size: 14px; color: var(--muted); }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Our Logins</h1>
+  <p class="lead">A password manager for KeePass files (.kdbx). Opens and saves the same databases as KeePass and KeePassXC, types logins into other apps with one hotkey, and unlocks with Windows Hello or Touch ID.</p>
+  <p class="version" id="version" hidden></p>
+
+  <section class="os" id="windows">
+    <h2><span class="os-icon" aria-hidden="true"></span>Windows<span class="mine-tag">Your system</span></h2>
+    <a class="dl" href="https://github.com/jmonasterio/kee-pass-j/releases/latest/download/OurLogins-windows-x64-setup.exe">Download for Windows (64-bit)</a>
+    <p class="note">Windows 10 or 11. Installs for your user only, no admin needed, with a Start menu entry. Our Logins offers each new version itself. The installer is not code-signed yet, so SmartScreen may warn: choose <b>More info</b>, then <b>Run anyway</b>.</p>
+    <p class="note">Prefer a single program file you place yourself? <a href="https://github.com/jmonasterio/kee-pass-j/releases/latest/download/OurLogins-windows-x64.exe">OurLogins-windows-x64.exe</a>. It cannot replace itself: accepting an update from it installs the version above alongside it.</p>
+  </section>
+
+  <section class="os" id="mac">
+    <h2><span class="os-icon" aria-hidden="true"></span>macOS<span class="mine-tag">Your system</span></h2>
+    <a class="dl" href="https://github.com/jmonasterio/kee-pass-j/releases/latest/download/OurLogins-macos-universal.dmg">Download for Mac (Apple silicon and Intel)</a>
+    <p class="note">macOS 12 or later. Open the .dmg and drag <b>Our Logins</b> to Applications. The app is not notarized yet: the first time, right-click it and choose <b>Open</b>. After that, Our Logins offers each new version itself.</p>
+  </section>
+
+  <section class="os" id="linux">
+    <h2><span class="os-icon" aria-hidden="true"></span>Linux<span class="mine-tag">Your system</span></h2>
+    <a class="dl" href="https://github.com/jmonasterio/kee-pass-j/releases/latest/download/OurLogins-linux-x86_64.AppImage">AppImage (x86-64)</a>
+    <a class="dl" href="https://github.com/jmonasterio/kee-pass-j/releases/latest/download/OurLogins-linux-amd64.deb">.deb (Debian, Ubuntu)</a>
+    <p class="note">AppImage: <code>chmod +x OurLogins-linux-x86_64.AppImage</code>, then run it. Quick unlock (fingerprint/PIN) is not available on Linux, and the typing hotkey needs an X11 session.</p>
+  </section>
+
+  <footer>
+    <a href="https://github.com/jmonasterio/kee-pass-j/releases">All releases</a> ·
+    <a href="https://github.com/jmonasterio/kee-pass-j">Source code</a>
+  </footer>
+</main>
+<script>
+  // Outline the download for the visitor's operating system.
+  const p = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || navigator.userAgent;
+  const id = /win/i.test(p) ? "windows" : /mac|iphone|ipad/i.test(p) ? "mac" : /linux|x11/i.test(p) ? "linux" : null;
+  if (id) document.getElementById(id).classList.add("mine");
+  // Latest release version and date from the GitHub API; stays hidden if the request fails.
+  fetch("https://api.github.com/repos/jmonasterio/kee-pass-j/releases/latest")
+    .then(r => r.ok ? r.json() : Promise.reject(r.status))
+    .then(rel => {
+      const el = document.getElementById("version");
+      const a = document.createElement("a");
+      a.href = rel.html_url;
+      a.textContent = "Version " + rel.tag_name.replace(/^v/, "");
+      const date = new Date(rel.published_at).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" });
+      el.append(a, ", released " + date);
+      el.hidden = false;
+    })
+    .catch(() => {});
+</script>
+</body>
+</html>

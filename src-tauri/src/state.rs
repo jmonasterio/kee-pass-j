@@ -179,6 +179,7 @@ impl AppState {
             open_dbs: self.dbs.iter().map(|d| d.vault.name()).collect(),
             pending_new: self.pending_new_db.as_ref().map(|p| p.display().to_string()),
             quick_unlock_label: label,
+            version: env!("CARGO_PKG_VERSION"),
         }
     }
 
