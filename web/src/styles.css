@@ -256,6 +256,7 @@ fluent-menu-item.danger-item {
 
 .keyfile-name {
   font-weight: var(--fontWeightSemibold);
+  overflow-wrap: anywhere;
 }
 
 .empty-recent {

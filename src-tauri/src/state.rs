@@ -164,8 +164,7 @@ impl AppState {
                     .iter()
                     .find(|r| &r.path == p)
                     .and_then(|r| r.keyfile.as_deref())
-                    .and_then(Path::file_name)
-                    .map(|n| n.to_string_lossy().into_owned()),
+                    .map(|k| k.display().to_string()),
                 quick_unlock: label.is_some() && biometric::has(p),
             })
             .collect();
